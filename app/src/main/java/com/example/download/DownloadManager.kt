@@ -187,7 +187,8 @@ class DownloadManager(private val context: Context) {
             updateState(DownloadStatus.CONNECTING, hebrewStatus = "מתחבר ליוטיוב ומחלץ שמע...")
 
             var rawFile: File? = null
-            val playerClients = listOf("android_vr", "web_embedded", "tv")
+            // Let yt-dlp choose its current default clients first; android_vr is no longer reliable.
+            val playerClients = listOf("default", "tv", "web_embedded")
             val attemptErrors = mutableListOf<String>()
 
             suspend fun tryPlayerClients(stage: String) {
@@ -366,6 +367,8 @@ class DownloadManager(private val context: Context) {
             addOption("--newline")
             addOption("--retries", "5")
             addOption("--socket-timeout", "20")
+            // Let yt-dlp fetch the matching JavaScript challenge components when needed.
+            addOption("--remote-components", "ejs:github")
             addOption("--extractor-args", "youtube:player_client=$playerClient")
             if (isLive) {
                 addOption("--no-part")
@@ -377,6 +380,7 @@ class DownloadManager(private val context: Context) {
             append("yt-dlp -f \"bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio/best\" ")
             append("-o \"${rawBase.name}.%(ext)s\" ")
             append("--no-playlist --no-mtime --newline --retries 5 --socket-timeout 20 ")
+            append("--remote-components ejs:github ")
             append("--extractor-args \"youtube:player_client=$playerClient\" ")
             if (isLive) append("--no-part --hls-use-mpegts ")
             append("https://www.youtube.com/watch?v=$videoId")

@@ -57,6 +57,7 @@ jobs:
           mkdir -p downloads
           cp "$APK" downloads/TuneVault.apk
           sha256sum downloads/TuneVault.apk | tee downloads/TuneVault.apk.sha256
+          sha256sum -c downloads/TuneVault.apk.sha256
 
       - name: Verify APK signature
         run: |
@@ -76,5 +77,18 @@ jobs:
             git commit -m "Publish latest TuneVault APK"
             git push origin "HEAD:${GITHUB_REF_NAME}"
           fi
+
+          # Verify the APK and checksum from the remote branch after publishing.
+          git fetch origin "refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}"
+          git show "origin/${GITHUB_REF_NAME}:downloads/TuneVault.apk" > /tmp/TuneVault.published.apk
+          git show "origin/${GITHUB_REF_NAME}:downloads/TuneVault.apk.sha256" > /tmp/TuneVault.published.apk.sha256
+          test -s /tmp/TuneVault.published.apk
+          cmp downloads/TuneVault.apk /tmp/TuneVault.published.apk
+          EXPECTED_SHA="$(awk '{print $1}' /tmp/TuneVault.published.apk.sha256)"
+          ACTUAL_SHA="$(sha256sum /tmp/TuneVault.published.apk | awk '{print $1}')"
+          test "$EXPECTED_SHA" = "$ACTUAL_SHA"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          "$APKSIGNER" verify --verbose /tmp/TuneVault.published.apk
+          echo "Verified: APK and SHA-256 are present on origin/${GITHUB_REF_NAME}"
 
 # Rebuild requested after the latest source update.
