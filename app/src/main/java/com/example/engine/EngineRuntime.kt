@@ -99,16 +99,11 @@ object EngineRuntime {
             cache.absolutePath, userPackages.absolutePath
         )
 
+        // versions() imports yt_dlp; if it succeeds, Python and yt-dlp are ready.
+        // FFmpeg/FFprobe/QuickJS checks above are diagnostics and must not block startup.
         val version = getVersionsInternal()
-        val pythonParts = version.python.split(".").take(2).mapNotNull { it.toIntOrNull() }
-        if (pythonParts.size < 2 || pythonParts[0] < 3 ||
-            (pythonParts[0] == 3 && pythonParts[1] < 11)
-        ) throw IllegalStateException("Python ${version.python} is too old for current yt-dlp")
-        if (version.ytDlp.isBlank() || version.ytDlp == "unknown") {
-            throw IllegalStateException("yt-dlp Python package did not load")
-        }
         initialized = true
-        Log.i(TAG, "Embedded engine ready: Python ${version.python}, yt-dlp ${version.ytDlp}, FFmpeg ${version.ffmpeg}")
+        Log.i(TAG, "Embedded engine ready: Python ${version.python}, yt-dlp ${version.ytDlp}")
     }
 
     fun isReady(): Boolean = initialized
