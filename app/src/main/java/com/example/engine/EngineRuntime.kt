@@ -72,7 +72,8 @@ object EngineRuntime {
         val ffmpeg = File(ffmpegDir, "ffmpeg")
         val ffprobe = File(ffmpegDir, "ffprobe")
         if (!ffmpeg.exists() || !ffprobe.exists() ||
-            !isVersionAtLeast(readVersion(ffmpeg), BUNDLED_FFMPEG_VERSION)
+            !isVersionAtLeast(readVersion(ffmpeg), BUNDLED_FFMPEG_VERSION) ||
+            !isVersionAtLeast(readVersion(ffprobe), BUNDLED_FFMPEG_VERSION)
         ) {
             installBundledFfmpeg(app, runtimeRoot)
         }
