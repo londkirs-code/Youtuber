@@ -16,6 +16,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
+import java.io.FileOutputStream
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONObject
 
 class App : Application() {
 
@@ -125,51 +129,140 @@ class App : Application() {
     suspend fun awaitYtdlp(): Boolean = ytdlpReady.await()
 
     /**
-     * Updates yt-dlp using the newest nightly build first, then the latest stable release.
-     * The library stores the release tag separately from the actual executable, so detect and
-     * clear stale/mismatched metadata before asking it to update.
+     * Use OkHttp for GitHub release metadata and asset downloads. The library updater
+     * uses URL.openStream() without a User-Agent and hides the underlying IOException.
      */
     suspend fun updateYtdlp(onLog: ((String) -> Unit)? = null): Boolean {
         return updateMutex.withLock {
-            val actualBefore = try {
-                verifyYtdlpEngine()
-            } catch (e: Exception) {
-                "unknown"
-            }
-            val storedVersion = YoutubeDL.version(this)
-            if (storedVersion != null && storedVersion != actualBefore) {
-                getSharedPreferences("youtubedl-android", MODE_PRIVATE).edit()
-                    .remove("dlpVersion")
-                    .remove("dlpVersionName")
-                    .apply()
-                onLog?.invoke("Stored yt-dlp tag $storedVersion did not match executable $actualBefore; forcing update check.")
-            }
-
+            val engineDir = File(noBackupFilesDir, "\${YoutubeDL.baseName}/\${YoutubeDL.ytdlpDirName}")
+            val binary = File(engineDir, YoutubeDL.ytdlpBin)
             val channels = listOf(
-                "NIGHTLY" to YoutubeDL.UpdateChannel.NIGHTLY,
-                "STABLE" to YoutubeDL.UpdateChannel.STABLE
+                "NIGHTLY" to "https://api.github.com/repos/yt-dlp/yt-dlp-nightly-builds/releases/latest",
+                "STABLE" to "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
             )
-            for ((channelName, channel) in channels) {
+            val client = OkHttpClient.Builder()
+                .retryOnConnectionFailure(true)
+                .followRedirects(true)
+                .connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(90, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+
+            for ((channelName, apiUrl) in channels) {
+                var tempFile: File? = null
+                var backupFile: File? = null
                 try {
-                    val status = YoutubeDL.getInstance().updateYoutubeDL(this, channel)
-                    val actualAfter = verifyYtdlpEngine()
-                    val succeeded = status == YoutubeDL.UpdateStatus.DONE ||
-                        status == YoutubeDL.UpdateStatus.ALREADY_UP_TO_DATE
-                    val message = "yt-dlp $channelName update status=$status; executable $actualBefore -> $actualAfter"
+                    onLog?.invoke("Checking $channelName release metadata...")
+                    val apiRequest = Request.Builder()
+                        .url(apiUrl)
+                        .header("Accept", "application/vnd.github+json")
+                        .header("X-GitHub-Api-Version", "2022-11-28")
+                        .header("User-Agent", "TuneVault-Android/1.4")
+                        .build()
+                    val release = client.newCall(apiRequest).execute().use { response ->
+                        if (!response.isSuccessful) {
+                            val detail = response.body?.string()?.take(500).orEmpty()
+                            throw IllegalStateException("GitHub API HTTP \${response.code}: $detail")
+                        }
+                        JSONObject(response.body?.string() ?: throw IllegalStateException("Empty GitHub API response"))
+                    }
+
+                    val tag = release.optString("tag_name")
+                    val releaseName = release.optString("name", tag)
+                    val assets = release.optJSONArray("assets")
+                        ?: throw IllegalStateException("Release $tag has no assets array")
+                    var downloadUrl: String? = null
+                    var expectedSize = -1L
+                    for (i in 0 until assets.length()) {
+                        val asset = assets.getJSONObject(i)
+                        if (asset.optString("name") == YoutubeDL.ytdlpBin) {
+                            downloadUrl = asset.optString("browser_download_url")
+                            expectedSize = asset.optLong("size", -1L)
+                            break
+                        }
+                    }
+                    if (downloadUrl.isNullOrBlank() || expectedSize <= 0L) {
+                        throw IllegalStateException("Release $tag has no valid yt-dlp asset")
+                    }
+                    if (!engineDir.exists() && !engineDir.mkdirs()) {
+                        throw IllegalStateException("Cannot create yt-dlp engine directory")
+                    }
+
+                    onLog?.invoke("Downloading yt-dlp $tag ($expectedSize bytes) from GitHub...")
+                    tempFile = File.createTempFile("yt-dlp-update-", ".tmp", engineDir)
+                    val assetRequest = Request.Builder()
+                        .url(downloadUrl)
+                        .header("User-Agent", "TuneVault-Android/1.4")
+                        .build()
+                    client.newCall(assetRequest).execute().use { response ->
+                        if (!response.isSuccessful) {
+                            throw IllegalStateException("GitHub asset HTTP \${response.code}")
+                        }
+                        val body = response.body ?: throw IllegalStateException("GitHub asset response is empty")
+                        FileOutputStream(tempFile).use { output ->
+                            body.byteStream().use { input ->
+                                val buffer = ByteArray(64 * 1024)
+                                while (true) {
+                                    val count = input.read(buffer)
+                                    if (count < 0) break
+                                    output.write(buffer, 0, count)
+                                }
+                            }
+                            output.fd.sync()
+                        }
+                    }
+                    if (tempFile.length() != expectedSize || tempFile.length() < 1_000_000L) {
+                        throw IllegalStateException("Downloaded asset size mismatch: \${tempFile.length()} vs $expectedSize")
+                    }
+                    if (!tempFile.setExecutable(true, false)) {
+                        throw IllegalStateException("Could not mark downloaded yt-dlp executable")
+                    }
+
+                    backupFile = File(engineDir, "yt-dlp.previous")
+                    if (backupFile.exists() && !backupFile.delete()) {
+                        throw IllegalStateException("Could not clear previous yt-dlp backup")
+                    }
+                    if (binary.exists() && !binary.renameTo(backupFile)) {
+                        throw IllegalStateException("Could not back up current yt-dlp executable")
+                    }
+                    if (!tempFile.renameTo(binary)) {
+                        if (backupFile.exists()) backupFile.renameTo(binary)
+                        throw IllegalStateException("Could not install downloaded yt-dlp executable")
+                    }
+                    tempFile = null
+
+                    val installedVersion = try {
+                        verifyYtdlpEngine()
+                    } catch (e: Exception) {
+                        binary.delete()
+                        if (backupFile.exists()) backupFile.renameTo(binary)
+                        throw IllegalStateException("Downloaded $tag is not runnable: \${e.message}", e)
+                    }
+                    if (backupFile.exists()) backupFile.delete()
+
+                    getSharedPreferences("youtubedl-android", MODE_PRIVATE).edit()
+                        .putString("dlpVersion", tag)
+                        .putString("dlpVersionName", releaseName)
+                        .apply()
+                    getSharedPreferences("ytdlp", MODE_PRIVATE).edit()
+                        .putLong("last_update", System.currentTimeMillis())
+                        .apply()
+
+                    val message = "Installed yt-dlp $tag successfully; executable reports $installedVersion."
                     Log.i(TAG, message)
                     onLog?.invoke(message)
-                    if (succeeded) {
-                        getSharedPreferences("ytdlp", MODE_PRIVATE)
-                            .edit().putLong("last_update", System.currentTimeMillis()).apply()
-                        return@withLock true
-                    }
+                    return@withLock true
                 } catch (e: Exception) {
-                    val message = "yt-dlp $channelName update failed: ${e.javaClass.simpleName}: ${e.message}"
-                    Log.w(TAG, message, e)
+                    val root = generateSequence(e as Throwable?) { it.cause }
+                        .map { "\${it.javaClass.simpleName}: \${it.message}" }
+                        .joinToString(" <- ")
+                    val message = "yt-dlp $channelName update failed: $root"
+                    Log.e(TAG, message, e)
                     onLog?.invoke(message)
+                    tempFile?.delete()
+                    if (backupFile?.exists() == true && !binary.exists()) backupFile.renameTo(binary)
                 }
             }
-            onLog?.invoke("Both NIGHTLY and STABLE yt-dlp update channels failed.")
+            onLog?.invoke("Both direct GitHub update channels failed; keeping the last verified engine.")
             false
         }
     }
