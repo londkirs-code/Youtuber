@@ -97,6 +97,27 @@ jobs:
       - name: Build debug APK
         run: gradle --no-daemon --stacktrace :app:assembleDebug
 
+      - name: Smoke-test the APK and FFmpeg/FFprobe on Android
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_5
+          emulator-boot-timeout: 600
+          script: |
+            set -euo pipefail
+            APK="$(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' | head -n 1)"
+            test -s "$APK"
+            adb install -r "$APK"
+            adb logcat -c
+            adb shell am start -n com.aistudio.tunevault.ytmpro/com.example.MainActivity
+            sleep 25
+            adb logcat -d | grep -F "Embedded engine ready:"
+            adb shell run-as com.aistudio.tunevault.ytmpro sh -c 'R=no_backup/tunevault-runtime/ffmpeg; "$R/ffmpeg" -hide_banner -f lavfi -i sine=frequency=1000:duration=1 -c:a aac -b:a 64k -y files/tunevault-smoke.m4a'
+            adb shell run-as com.aistudio.tunevault.ytmpro sh -c 'R=no_backup/tunevault-runtime/ffmpeg; "$R/ffprobe" -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 files/tunevault-smoke.m4a' | grep -E '^1\.'
+            echo "Android runtime smoke test passed: app initialized, FFmpeg encoded audio, FFprobe read the output."
+
       - name: Verify APK engine payload and calculate SHA-256
         shell: bash
         run: |
