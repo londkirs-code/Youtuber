@@ -49,12 +49,13 @@ jobs:
           sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
           yes | sdkmanager --licenses
 
-      - name: Preserve previous APK for update-signature verification
+      - name: Preserve latest published APK for update-signature verification
         shell: bash
         run: |
           set -euo pipefail
-          if [ -s downloads/TuneVault.apk ]; then
-            cp downloads/TuneVault.apk /tmp/TuneVault.previous.apk
+          git fetch origin "$GITHUB_REF_NAME"
+          if git cat-file -e "origin/$GITHUB_REF_NAME:downloads/TuneVault.apk" 2>/dev/null; then
+            git show "origin/$GITHUB_REF_NAME:downloads/TuneVault.apk" > /tmp/TuneVault.previous.apk
           fi
 
       - name: Build matching FFmpeg and FFprobe 9.0.2 for Android arm64
