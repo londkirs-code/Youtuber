@@ -41,6 +41,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.BuildConfig
 import com.example.data.model.AudioQuality
 import com.example.data.model.UserSettings
 import com.example.ui.theme.BorderDark
@@ -249,6 +250,13 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(18.dp))
 
+        Spacer(modifier = Modifier.height(18.dp))
+
+        // Developer diagnostics and engine test bench
+        EnginePlayground()
+
+        Spacer(modifier = Modifier.height(18.dp))
+
         // SECTION: About & Engine
         SectionHeader("אודות המערכת")
         Card(
@@ -260,7 +268,7 @@ fun SettingsScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Info, contentDescription = null, tint = NeonCyan, modifier = Modifier.size(22.dp))
                     Spacer(modifier = Modifier.width(10.dp))
-                    Text("TuneVault v1.0 • מנוע yt-dlp", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text("TuneVault v${BuildConfig.VERSION_NAME} • מנוע yt-dlp", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 }
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
