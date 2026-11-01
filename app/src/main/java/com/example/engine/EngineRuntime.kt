@@ -69,7 +69,7 @@ object EngineRuntime {
         val ffmpegBinary = File(nativeDir, "libffmpeg.so")
         val ffprobeBinary = File(nativeDir, "libffprobe.so")
         if (!ffmpegBinary.isFile || !ffprobeBinary.isFile) {
-            throw IllegalStateException("Bundled FFmpeg native libraries are missing from $nativeDir")
+            Log.w(TAG, "One or more bundled FFmpeg native libraries are missing from $nativeDir; continuing engine initialization.")
         }
 
         try {
@@ -86,12 +86,13 @@ object EngineRuntime {
         val runtimeRoot = File(app.noBackupFilesDir, "tunevault-runtime")
         val ffmpegDir = File(runtimeRoot, "bin")
         if (!ffmpegDir.exists() && !ffmpegDir.mkdirs()) {
-            throw IllegalStateException("Cannot create private FFmpeg link directory")
+            Log.w(TAG, "Cannot create private FFmpeg link directory; passing the native FFmpeg path directly.")
         }
         val ffmpegLink = File(ffmpegDir, "ffmpeg")
         val ffprobeLink = File(ffmpegDir, "ffprobe")
         var ffmpegLocation = ffmpegDir.absolutePath
         try {
+            if (!ffmpegDir.isDirectory) throw IllegalStateException("Private FFmpeg link directory is unavailable")
             ffmpegLink.delete()
             ffprobeLink.delete()
             android.system.Os.symlink(ffmpegBinary.absolutePath, ffmpegLink.absolutePath)
