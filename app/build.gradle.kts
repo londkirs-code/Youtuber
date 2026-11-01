@@ -83,7 +83,7 @@ android {
 
 chaquopy {
   defaultConfig {
-    buildPython("/usr/bin/python3")
+    buildPython(System.getenv("BUILD_PYTHON") ?: "/usr/bin/python3")
     version = "3.11"
     pip {
       install("yt-dlp==2026.10.26")
