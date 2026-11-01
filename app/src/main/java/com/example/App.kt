@@ -31,6 +31,8 @@ class App : Application() {
                 Log.i(TAG, "Embedded Python/yt-dlp/FFmpeg engine initialized.")
                 ytdlpReady.complete(true)
             } catch (error: Exception) {
+                getSharedPreferences("yt-dlp-engine", MODE_PRIVATE).edit()
+                    .putString("engine_error", error.stackTraceToString()).apply()
                 Log.e(TAG, "Embedded yt-dlp engine initialization failed", error)
                 ytdlpReady.complete(false)
             }
