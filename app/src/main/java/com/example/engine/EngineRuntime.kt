@@ -71,10 +71,15 @@ object EngineRuntime {
         val ffmpegDir = File(runtimeRoot, "ffmpeg")
         val ffmpeg = File(ffmpegDir, "ffmpeg")
         val ffprobe = File(ffmpegDir, "ffprobe")
-        if (!ffmpeg.exists() || !ffprobe.exists() ||
-            !isVersionAtLeast(readVersion(ffmpeg), BUNDLED_FFMPEG_VERSION) ||
-            !isVersionAtLeast(readVersion(ffprobe), BUNDLED_FFMPEG_VERSION)
-        ) {
+        val bundledFfmpegValid = try {
+            ffmpeg.exists() && ffprobe.exists() &&
+                isVersionAtLeast(readVersion(ffmpeg), BUNDLED_FFMPEG_VERSION) &&
+                isVersionAtLeast(readVersion(ffprobe), BUNDLED_FFMPEG_VERSION)
+        } catch (error: Exception) {
+            Log.w(TAG, "Existing FFmpeg runtime is invalid; restoring the APK copy.", error)
+            false
+        }
+        if (!bundledFfmpegValid) {
             installBundledFfmpeg(app, runtimeRoot)
         }
         if (!ffmpeg.setExecutable(true, false) || !ffprobe.setExecutable(true, false)) {
@@ -277,8 +282,12 @@ object EngineRuntime {
         if (!tempDir.mkdirs()) throw IllegalStateException("Cannot create bundled FFmpeg directory")
         copyAsset(context, "ffmpeg/ffmpeg", File(tempDir, "ffmpeg"))
         copyAsset(context, "ffmpeg/ffprobe", File(tempDir, "ffprobe"))
-        File(tempDir, "ffmpeg").setExecutable(true, false)
-        File(tempDir, "ffprobe").setExecutable(true, false)
+        if (!File(tempDir, "ffmpeg").setExecutable(true, false) ||
+            !File(tempDir, "ffprobe").setExecutable(true, false)
+        ) {
+            tempDir.deleteRecursively()
+            throw IllegalStateException("Could not mark bundled FFmpeg/FFprobe executable")
+        }
         val version = readVersion(File(tempDir, "ffmpeg"))
         val probeVersion = readVersion(File(tempDir, "ffprobe"))
         if (!version.contains(BUNDLED_FFMPEG_VERSION) || !probeVersion.contains(BUNDLED_FFMPEG_VERSION)) {
