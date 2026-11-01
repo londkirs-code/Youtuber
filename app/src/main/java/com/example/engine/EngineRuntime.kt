@@ -190,6 +190,7 @@ object EngineRuntime {
                 val target = File(app.filesDir, "yt-dlp-python")
                 val temp = File(app.filesDir, "yt-dlp-python.tmp")
                 val backup = File(app.filesDir, "yt-dlp-python.backup")
+                val hadPreviousPackages = target.exists()
                 temp.deleteRecursively()
                 if (!temp.mkdirs()) throw IllegalStateException("Cannot create temporary Python package directory")
                 try {
@@ -240,6 +241,8 @@ object EngineRuntime {
                                 Log.e(TAG, "Could not reactivate the previous yt-dlp package set", error)
                             }
                         }
+                    } else if (!hadPreviousPackages) {
+                        target.deleteRecursively()
                     }
                     callback.onLog("ERROR", error.message ?: error.javaClass.simpleName)
                     throw error
