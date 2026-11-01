@@ -49,6 +49,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _currentTab.value = index
     }
 
+    fun onTabClicked(index: Int) {
+        if (_currentTab.value == index) {
+            reloadTab(index)
+        } else {
+            _currentTab.value = index
+        }
+    }
+
+    fun reloadTab(index: Int) {
+        when (index) {
+            0 -> {
+                val q = _searchQuery.value.trim()
+                if (q.isNotBlank()) executeSearch(q)
+            }
+            1 -> {
+                // Downloads list auto-reflects StateFlow
+            }
+            2 -> {
+                // Library tracks auto-reflect StateFlow
+            }
+            3 -> {
+                // Settings
+            }
+        }
+    }
+
     // Search state
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
@@ -208,6 +234,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun loadMoreSearchResults() {
+        val q = _searchQuery.value.trim()
+        if (q.isBlank() || _isSearching.value || isYoutubeLink(q)) return
+        viewModelScope.launch {
+            val currentSize = _searchResults.value.size
+            val more = YouTubeEngine.searchMoreVideos(q, currentSize)
+            if (more.isNotEmpty()) {
+                val existingIds = _searchResults.value.map { it.id }.toSet()
+                val filtered = more.filter { it.id !in existingIds }
+                _searchResults.value = _searchResults.value + filtered
+            }
+        }
+    }
+
     fun dismissSuggestions() {
         suggestionDebounceJob?.cancel()
         _searchSuggestions.value = emptyList()
@@ -312,10 +352,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _trimEndMs.value = endMs
     }
 
-    fun startDownload(item: SearchResultItem, applyTrim: Boolean = false) {
+    fun startDownload(item: SearchResultItem, applyTrim: Boolean = false, quality: AudioQuality? = null) {
         val trimRange = if (applyTrim) {
             TrimRange(startMs = _trimStartMs.value, endMs = _trimEndMs.value, totalMs = item.durationMs)
         } else null
+
+        val effectiveSettings = if (quality != null) {
+            _settings.value.copy(audioQuality = quality)
+        } else {
+            _settings.value
+        }
 
         downloadManager.startDownload(
             videoId = item.id,
@@ -324,20 +370,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             thumbnailUrl = item.thumbnailUrl,
             isLive = item.isLive,
             trimRange = trimRange,
-            settings = _settings.value
+            settings = effectiveSettings
         )
 
         closeTrimmerDialog()
         _currentTab.value = 1
     }
 
-    // Playback Controls
+    // Playback Controls (Clicking opens Full Player directly per Requirement 2)
     fun playTrack(track: TrackEntity) {
         playerService?.playTrackList(listOf(track), 0)
+        _isFullPlayerOpen.value = true
     }
 
     fun playTrackInList(trackList: List<TrackEntity>, index: Int) {
         playerService?.playTrackList(trackList, index)
+        _isFullPlayerOpen.value = true
+    }
+
+    fun playTrackById(trackId: String) {
+        viewModelScope.launch {
+            val track = database.trackDao().getTrackById(trackId)
+                ?: tracks.value.firstOrNull { it.id == trackId }
+            if (track != null) {
+                playTrack(track)
+            }
+        }
     }
 
     fun togglePlayPause() {
@@ -395,6 +453,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setAutoEmbedCoverArt(embed: Boolean) {
         _settings.value = _settings.value.copy(autoEmbedCoverArt = embed)
+    }
+
+    fun setDownloadFolder(path: String) {
+        _settings.value = _settings.value.copy(downloadFolderPath = path)
     }
 
     fun deleteTrack(track: TrackEntity) {

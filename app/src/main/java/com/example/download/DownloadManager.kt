@@ -63,10 +63,16 @@ class DownloadManager(private val context: Context) {
     private val activeJobs = ConcurrentHashMap<String, Job>()
     private val liveStopRequested = ConcurrentHashMap.newKeySet<String>()
 
-    private val musicDir: File by lazy {
-        val dir = File(context.getExternalFilesDir(null), "Music")
+    private fun getDownloadFolder(settings: UserSettings): File {
+        val customName = settings.downloadFolderPath.trim()
+        val dir = if (customName.isNotBlank() && !customName.contains("Music/TuneVault") && customName != "Music") {
+            val sanitized = customName.replace(Regex("[^a-zA-Z0-9א-ת _/-]"), "")
+            File(context.getExternalFilesDir(null), sanitized)
+        } else {
+            File(context.getExternalFilesDir(null), "Music")
+        }
         if (!dir.exists()) dir.mkdirs()
-        dir
+        return dir
     }
 
     private fun isWifiConnected(): Boolean {
@@ -102,10 +108,38 @@ class DownloadManager(private val context: Context) {
 
         // Keep the process alive + show "download started" notification
         DownloadService.start(context)
-        Notifier.downloadStarted(context, taskId, title)
+        Notifier.downloadStarted(context, taskId, title, thumbnailUrl)
+
+        // Insert initial track in Room immediately so it appears in Library right away (Requirement 6)
+        val targetFolder = getDownloadFolder(settings)
+        val sanitizedTitle = title.replace(Regex("[^a-zA-Z0-9א-ת _-]"), "").trim().ifEmpty { "Audio_$videoId" }
+        val rawBase = File(targetFolder, "${sanitizedTitle}_raw_${System.currentTimeMillis()}")
+        val initialFilePath = rawBase.absolutePath + ".m4a"
+
+        scope.launch {
+            try {
+                database.trackDao().insertTrack(
+                    TrackEntity(
+                        id = taskId,
+                        title = title,
+                        artist = channel,
+                        durationMs = 0L,
+                        filePath = initialFilePath,
+                        thumbnailUrl = thumbnailUrl,
+                        fileSizeBytes = 0L,
+                        isLiveCapture = isLive,
+                        isTrimmed = false,
+                        trimStartMs = 0L,
+                        trimEndMs = 0L
+                    )
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "Error inserting initial track in Room", e)
+            }
+        }
 
         val job = scope.launch(CoroutineName(taskId)) {
-            executeDownload(taskId, videoId, title, channel, thumbnailUrl, isLive, trimRange, settings)
+            executeDownload(taskId, videoId, title, channel, thumbnailUrl, isLive, trimRange, settings, targetFolder, rawBase)
         }
         activeJobs[taskId] = job
         return taskId
@@ -119,7 +153,9 @@ class DownloadManager(private val context: Context) {
         thumbnailUrl: String,
         isLive: Boolean,
         trimRange: TrimRange?,
-        settings: UserSettings
+        settings: UserSettings,
+        targetFolder: File,
+        rawBase: File
     ) {
         var lastPercent = 0
 
@@ -173,11 +209,11 @@ class DownloadManager(private val context: Context) {
                     Notifier.downloadFailed(context, taskId, title, hebrewStatus ?: "שגיאה")
                 DownloadStatus.COMPLETED -> Unit // handled at the end of the download
                 DownloadStatus.RECORDING_LIVE ->
-                    Notifier.downloadProgress(context, taskId, title, -1, hebrewStatus ?: "מקליט שידור חי...")
+                    Notifier.downloadProgress(context, taskId, title, -1, hebrewStatus ?: "מקליט שידור חי...", thumbnailUrl)
                 DownloadStatus.DOWNLOADING ->
-                    Notifier.downloadProgress(context, taskId, title, lastPercent, hebrewStatus ?: "מוריד...")
+                    Notifier.downloadProgress(context, taskId, title, lastPercent, hebrewStatus ?: "מוריד...", thumbnailUrl)
                 else ->
-                    Notifier.downloadProgress(context, taskId, title, if (status == DownloadStatus.FINISHING) 100 else -1, hebrewStatus ?: "")
+                    Notifier.downloadProgress(context, taskId, title, if (status == DownloadStatus.FINISHING) 100 else -1, hebrewStatus ?: "", thumbnailUrl)
             }
         }
 
@@ -206,9 +242,6 @@ class DownloadManager(private val context: Context) {
                 return
             }
 
-            val sanitizedTitle = title.replace(Regex("[^a-zA-Z0-9א-ת _-]"), "").trim().ifEmpty { "Audio_$videoId" }
-            val rawBase = File(musicDir, "${sanitizedTitle}_raw_${System.currentTimeMillis()}")
-
             updateState(DownloadStatus.CONNECTING, hebrewStatus = "מתחבר ליוטיוב ומחלץ שמע...")
 
             var rawFile: File? = null
@@ -223,7 +256,7 @@ class DownloadManager(private val context: Context) {
                     try {
                         log("[yt-dlp] מנסה לקוח YouTube: $playerClient ($stage)")
                         rawFile = runYtDlp(
-                            taskId, videoId, isLive, rawBase,
+                            taskId, videoId, isLive, targetFolder, rawBase,
                             playerClient, ::log, ::rawLog, ::updateState
                         )
                         if (rawFile != null && rawFile!!.exists() && rawFile!!.length() > 0L) {
@@ -288,7 +321,7 @@ class DownloadManager(private val context: Context) {
             if (isTrimmed && trimRange != null) {
                 updateState(DownloadStatus.TRIMMING, hebrewStatus = "חותך מקטע שמע נבחר...")
                 log("[חיתוך] מפעיל MediaMuxer לחיתוך מקטע (${formatDuration(trimRange.startMs)} עד ${formatDuration(trimRange.endMs)})...")
-                val trimmedFile = File(musicDir, "${sanitizedTitle}_${System.currentTimeMillis()}.$ext")
+                val trimmedFile = File(targetFolder, "${rawBase.nameWithoutExtension}_trimmed.$ext")
 
                 val success = AudioTrimmer.trimM4A(
                     sourceFile = downloadedRawFile,
@@ -307,7 +340,7 @@ class DownloadManager(private val context: Context) {
             }
 
             if (finalFile == downloadedRawFile) {
-                val cleanFile = File(musicDir, "${sanitizedTitle}_${System.currentTimeMillis()}.$ext")
+                val cleanFile = File(targetFolder, "${rawBase.nameWithoutExtension}.$ext")
                 if (downloadedRawFile.renameTo(cleanFile)) finalFile = cleanFile
             }
 
@@ -315,7 +348,7 @@ class DownloadManager(private val context: Context) {
 
             val fullDurationMs = fileDurationMs(finalFile)
             val track = TrackEntity(
-                id = videoId + "_" + System.currentTimeMillis(),
+                id = taskId,
                 title = title,
                 artist = channel,
                 durationMs = if (isTrimmed && trimRange != null) (trimRange.endMs - trimRange.startMs) else fullDurationMs,
@@ -330,7 +363,7 @@ class DownloadManager(private val context: Context) {
 
             database.trackDao().insertTrack(track)
 
-            log("[הצלחה] הקובץ מוכן ונשמר בספריית המוזיקה!")
+            log("[הצלחה] הקובץ מוכן ונשמר בספרייה!")
             rawLog("[success] File successfully saved: ${finalFile.name} (${finalFile.length()} bytes)")
             _tasks.update { list ->
                 list.map {
@@ -344,7 +377,7 @@ class DownloadManager(private val context: Context) {
                     } else it
                 }
             }
-            Notifier.downloadFinished(context, taskId, title)
+            Notifier.downloadFinished(context, taskId, title, finalFile.absolutePath)
 
         } catch (e: EngineCancelledException) {
             log("[ביטול] ההורדה בוטלה.")
@@ -383,13 +416,14 @@ class DownloadManager(private val context: Context) {
         taskId: String,
         videoId: String,
         isLive: Boolean,
+        targetFolder: File,
         rawBase: File,
         playerClient: String,
         log: (String) -> Unit,
         rawLog: (String) -> Unit,
         updateState: (DownloadStatus, Int, String?, String?, String?, String?, Long?) -> Unit
     ): File? {
-        musicDir.listFiles { file -> file.name.startsWith(rawBase.name + ".") }?.forEach { it.delete() }
+        targetFolder.listFiles { file -> file.name.startsWith(rawBase.name + ".") }?.forEach { it.delete() }
 
         val args = mutableListOf(
             "-f", "bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio/best",
@@ -427,6 +461,8 @@ class DownloadManager(private val context: Context) {
         }
 
         val callback = object : YtDlpBridgeCallback {
+            private var lastLoggedPercent = -1
+
             override fun onLog(level: String, message: String) {
                 rawLog("[$level] $message")
             }
@@ -441,6 +477,14 @@ class DownloadManager(private val context: Context) {
                     downloadedText, totalText,
                     "מוריד נתוני שמע: $safePercent%" + (totalText?.let { " מתוך $it" } ?: ""), null
                 )
+
+                // Log Hebrew status with percentage (Requirement 10)
+                if (safePercent >= lastLoggedPercent + 15 || safePercent in listOf(25, 50, 75, 95)) {
+                    if (safePercent != lastLoggedPercent) {
+                        lastLoggedPercent = safePercent
+                        log("[הורדה] התקדמות: $safePercent% ($downloadedText מתוך ${totalText ?: "--"}) במהירות ${speed.ifEmpty { "..." }}")
+                    }
+                }
             }
 
             override fun isCancelled(): Boolean = false
@@ -463,7 +507,7 @@ class DownloadManager(private val context: Context) {
             ticker?.cancel()
         }
 
-        return musicDir.listFiles { file ->
+        return targetFolder.listFiles { file ->
             file.isFile && file.name.startsWith(rawBase.name + ".") &&
                 !file.name.endsWith(".part") && !file.name.endsWith(".ytdl") && file.length() > 0L
         }?.maxByOrNull { it.length() }
@@ -480,6 +524,11 @@ class DownloadManager(private val context: Context) {
         activeJobs[taskId]?.cancel()
         _tasks.update { it.filterNot { task -> task.id == taskId } }
         Notifier.cancel(context, taskId)
+        scope.launch {
+            try {
+                database.trackDao().deleteTrackById(taskId)
+            } catch (_: Exception) {}
+        }
     }
 
     // ---------------- helpers ----------------

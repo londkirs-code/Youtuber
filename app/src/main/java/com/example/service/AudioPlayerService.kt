@@ -77,6 +77,7 @@ class AudioPlayerService : Service() {
         const val ACTION_NEXT = "com.example.action.NEXT"
         const val ACTION_REWIND_10S = "com.example.action.REWIND_10S"
         const val ACTION_FORWARD_10S = "com.example.action.FORWARD_10S"
+        const val ACTION_CYCLE_SPEED = "com.example.action.CYCLE_SPEED"
         const val ACTION_STOP = "com.example.action.STOP"
     }
 
@@ -99,6 +100,7 @@ class AudioPlayerService : Service() {
             ACTION_NEXT -> playNext()
             ACTION_REWIND_10S -> rewind10Seconds()
             ACTION_FORWARD_10S -> forward10Seconds()
+            ACTION_CYCLE_SPEED -> cyclePlaybackSpeed()
             ACTION_STOP -> stopPlayback()
         }
         return START_NOT_STICKY
@@ -132,14 +134,27 @@ class AudioPlayerService : Service() {
             mediaPlayer?.release()
             mediaPlayer = null
 
-            val file = File(track.filePath)
-            if (!file.exists()) {
-                Log.e(TAG, "File does not exist: ${track.filePath}")
+            var playableFile: File? = File(track.filePath)
+            if (playableFile?.exists() != true) {
+                val partFile = File(track.filePath + ".part")
+                if (partFile.exists() && partFile.length() > 32000L) {
+                    playableFile = partFile
+                } else {
+                    val basePrefix = File(track.filePath).nameWithoutExtension
+                    val candidate = File(track.filePath).parentFile?.listFiles { f ->
+                        f.name.startsWith(basePrefix) && f.length() > 32000L
+                    }?.maxByOrNull { it.length() }
+                    if (candidate != null) playableFile = candidate
+                }
+            }
+
+            if (playableFile == null || !playableFile.exists() || playableFile.length() == 0L) {
+                Log.e(TAG, "File does not exist or is empty: ${track.filePath}")
                 return
             }
 
             mediaPlayer = MediaPlayer().apply {
-                setDataSource(file.absolutePath)
+                setDataSource(playableFile.absolutePath)
                 setOnPreparedListener { mp ->
                     mp.start()
                     applyPlaybackSpeed(_playbackSpeed.value)
@@ -203,6 +218,18 @@ class AudioPlayerService : Service() {
         val clampedSpeed = ((speed * 100).toInt() / 100f).coerceIn(0.25f, 3.00f)
         _playbackSpeed.value = clampedSpeed
         applyPlaybackSpeed(clampedSpeed)
+    }
+
+    fun cyclePlaybackSpeed() {
+        val current = _playbackSpeed.value
+        val next = when {
+            current < 1.15f -> 1.25f
+            current < 1.4f -> 1.50f
+            current < 1.8f -> 2.00f
+            else -> 1.00f
+        }
+        setPlaybackSpeed(next)
+        _currentTrack.value?.let { updateNotification(it) }
     }
 
     private fun applyPlaybackSpeed(speed: Float) {
@@ -371,16 +398,32 @@ class AudioPlayerService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val speedIntent = PendingIntent.getService(
+            this,
+            6,
+            Intent(this, AudioPlayerService::class.java).apply { action = ACTION_CYCLE_SPEED },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val closeIntent = PendingIntent.getService(
+            this,
+            7,
+            Intent(this, AudioPlayerService::class.java).apply { action = ACTION_STOP },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         val playPauseIcon = if (_isPlaying.value) {
             android.R.drawable.ic_media_pause
         } else {
             android.R.drawable.ic_media_play
         }
 
+        val speedFormatted = String.format("%.2fx", _playbackSpeed.value).replace(".00", "")
+
         val builder = Notification.Builder(this, CHANNEL_ID)
             .setContentTitle(track.title)
             .setContentText(track.artist)
-            .setSubText("TuneVault • ${(track.durationMs / 60000)}:${((track.durationMs % 60000) / 1000).toString().padStart(2, '0')}")
+            .setSubText("YouTube • ${(track.durationMs / 60000)}:${((track.durationMs % 60000) / 1000).toString().padStart(2, '0')}")
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentIntent(contentIntent)
             .setOngoing(_isPlaying.value)
@@ -390,16 +433,16 @@ class AudioPlayerService : Service() {
             builder.setLargeIcon(it)
         }
 
-        // Actions: [Rewind 10s, Previous, Play/Pause, Next, Forward 10s]
-        builder.addAction(Notification.Action.Builder(android.R.drawable.ic_media_rew, "10- שניות", rewindIntent).build())
+        // Actions: [Previous, Play/Pause, Next, Speed, Close]
         builder.addAction(Notification.Action.Builder(android.R.drawable.ic_media_previous, "הקודם", prevIntent).build())
         builder.addAction(Notification.Action.Builder(playPauseIcon, if (_isPlaying.value) "השהה" else "נגן", playPauseIntent).build())
         builder.addAction(Notification.Action.Builder(android.R.drawable.ic_media_next, "הבא", nextIntent).build())
-        builder.addAction(Notification.Action.Builder(android.R.drawable.ic_media_ff, "10+ שניות", forwardIntent).build())
+        builder.addAction(Notification.Action.Builder(android.R.drawable.ic_menu_recent_history, speedFormatted, speedIntent).build())
+        builder.addAction(Notification.Action.Builder(android.R.drawable.ic_menu_close_clear_cancel, "סגור", closeIntent).build())
 
         val mediaStyle = Notification.MediaStyle()
             .setMediaSession(mediaSession?.sessionToken)
-            .setShowActionsInCompactView(1, 2, 3)
+            .setShowActionsInCompactView(0, 1, 2)
 
         builder.style = mediaStyle
         return builder.build()

@@ -64,7 +64,8 @@ data class UserSettings(
     val autoEmbedCoverArt: Boolean = true,
     val defaultPlaybackSpeed: Float = 1.0f,
     val bufferSizeMs: Int = 2000,
-    val autoSaveToMusicDir: Boolean = true
+    val autoSaveToMusicDir: Boolean = true,
+    val downloadFolderPath: String = "תיקיית המוזיקה (Music/TuneVault)"
 )
 
 enum class RepeatMode {

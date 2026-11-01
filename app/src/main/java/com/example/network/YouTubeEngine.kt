@@ -198,6 +198,69 @@ object YouTubeEngine {
         emptyList()
     }
 
+    /**
+     * Fetches additional search results for pagination/infinite scroll.
+     */
+    suspend fun searchMoreVideos(query: String, offset: Int): List<SearchResultItem> = withContext(Dispatchers.IO) {
+        val trimmed = query.trim()
+        if (trimmed.isBlank() || isYoutubeLink(trimmed)) return@withContext emptyList()
+        val page = (offset / 20) + 1
+        try {
+            val encoded = URLEncoder.encode(trimmed, "UTF-8")
+            val invidiousUrl = "https://invidious.nerdvpn.de/api/v1/search?q=$encoded&type=video&page=$page"
+            val request = Request.Builder()
+                .url(invidiousUrl)
+                .header("User-Agent", "Mozilla/5.0")
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val bodyString = response.body?.string() ?: ""
+                    val jsonArray = JSONArray(bodyString)
+                    val list = mutableListOf<SearchResultItem>()
+                    for (i in 0 until jsonArray.length().coerceAtMost(25)) {
+                        val obj = jsonArray.getJSONObject(i)
+                        val id = obj.optString("videoId")
+                        if (id.isNotBlank()) {
+                            val title = obj.optString("title", "ללא כותרת")
+                            val author = obj.optString("author", "ערוץ YouTube")
+                            val lengthSeconds = obj.optLong("lengthSeconds", 0L)
+                            val isLive = obj.optBoolean("liveNow", false)
+                            val durationText = if (isLive) "LIVE" else formatDuration(lengthSeconds * 1000L)
+                            val views = obj.optLong("viewCount", 0L)
+                            val viewsFormatted = if (views > 0) formatViews(views) else "צפיות"
+                            val publishedText = obj.optString("publishedText", "לאחרונה")
+                            val thumb = "https://i.ytimg.com/vi/$id/hqdefault.jpg"
+
+                            list.add(
+                                SearchResultItem(
+                                    id = id,
+                                    title = title,
+                                    channelTitle = author,
+                                    durationText = durationText,
+                                    durationMs = lengthSeconds * 1000L,
+                                    thumbnailUrl = thumb,
+                                    viewsText = viewsFormatted,
+                                    uploadedText = publishedText,
+                                    isLive = isLive,
+                                    channelId = obj.optString("authorId", "")
+                                )
+                            )
+                        }
+                    }
+                    if (list.isNotEmpty()) return@withContext list
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "searchMoreVideos failed", e)
+        }
+        emptyList()
+    }
+
+    private fun isYoutubeLink(text: String): Boolean =
+        (text.contains("youtu.be/") || text.contains("youtube.com/")) &&
+            extractVideoId(text) != null
+
     private fun parseSearchResponse(jsonString: String): List<SearchResultItem> {
         val list = mutableListOf<SearchResultItem>()
         try {

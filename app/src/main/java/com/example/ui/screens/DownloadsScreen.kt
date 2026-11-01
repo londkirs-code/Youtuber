@@ -60,7 +60,7 @@ fun DownloadsScreen(
                 .padding(vertical = 8.dp)
         ) {
             Text(
-                text = "תור הורדות ו-yt-dlp",
+                text = "תור הורדות קבצים",
                 color = TextPrimary,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold
@@ -114,7 +114,7 @@ fun DownloadsScreen(
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "חפש שיר במסך הראשי או שתף סרטון מיוטיוב כדי להוריד שמע",
+                        text = "חפש סרטון או פודקאסט במסך הראשי או שתף קישור כדי להתחיל בהורדה",
                         color = TextSecondary,
                         fontSize = 13.sp,
                         textAlign = TextAlign.Center

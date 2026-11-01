@@ -8,11 +8,19 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Build
+import android.util.LruCache
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.example.MainActivity
 import com.example.download.DownloadActionReceiver
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import java.net.URL
 
 object Notifier {
     const val CH_PROGRESS = "download_progress"
@@ -22,8 +30,13 @@ object Notifier {
     const val FG_ID = 7001
 
     const val EXTRA_OPEN_VIDEO_ID = "open_video_id"
+    const val EXTRA_PLAY_TRACK_ID = "play_track_id"
+    const val EXTRA_PLAY_FILE_PATH = "play_file_path"
 
     private val lastProgressAt = HashMap<String, Long>()
+    private val thumbCache = LruCache<String, Bitmap>(30)
+    private val thumbUrls = HashMap<String, String>()
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     fun createChannels(ctx: Context) {
         if (Build.VERSION.SDK_INT < 26) return
@@ -52,10 +65,18 @@ object Notifier {
 
     private fun notifyId(key: String) = key.hashCode()
 
-    private fun openAppIntent(ctx: Context, videoId: String? = null, requestCode: Int = 0): PendingIntent {
+    private fun openAppIntent(
+        ctx: Context,
+        videoId: String? = null,
+        playTrackId: String? = null,
+        playFilePath: String? = null,
+        requestCode: Int = 0
+    ): PendingIntent {
         val intent = Intent(ctx, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
             if (videoId != null) putExtra(EXTRA_OPEN_VIDEO_ID, videoId)
+            if (playTrackId != null) putExtra(EXTRA_PLAY_TRACK_ID, playTrackId)
+            if (playFilePath != null) putExtra(EXTRA_PLAY_FILE_PATH, playFilePath)
         }
         return PendingIntent.getActivity(
             ctx, requestCode, intent,
@@ -63,41 +84,63 @@ object Notifier {
         )
     }
 
+    fun cacheThumbnail(key: String, url: String) {
+        if (url.isBlank()) return
+        thumbUrls[key] = url
+        if (thumbCache.get(url) != null) return
+        scope.launch {
+            try {
+                val stream = URL(url).openStream()
+                val bmp = BitmapFactory.decodeStream(stream)
+                if (bmp != null) {
+                    thumbCache.put(url, bmp)
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun getCachedBitmap(key: String): Bitmap? {
+        val url = thumbUrls[key] ?: return null
+        return thumbCache.get(url)
+    }
+
     /** Notification shown by the foreground service while downloads are running. */
     fun foregroundNotification(ctx: Context): Notification =
         NotificationCompat.Builder(ctx, CH_SERVICE)
             .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle("TuneVault מוריד ברקע")
+            .setContentTitle("YouTube מוריד קבצים ברקע")
             .setContentIntent(openAppIntent(ctx))
             .setOngoing(true)
             .setSilent(true)
             .build()
 
-    fun downloadStarted(ctx: Context, taskId: String, title: String) {
+    fun downloadStarted(ctx: Context, taskId: String, title: String, thumbnailUrl: String = "") {
         if (!canNotify(ctx)) return
-        val n = progressBuilder(ctx, taskId, title)
+        if (thumbnailUrl.isNotBlank()) cacheThumbnail(taskId, thumbnailUrl)
+        val n = progressBuilder(ctx, taskId, title, 0)
             .setContentText("ההורדה התחילה...")
             .setProgress(0, 0, true)
             .build()
         nm(ctx).notify(notifyId(taskId), n)
     }
 
-    /** percent < 0 => indeterminate bar (live recording, connecting...) */
-    fun downloadProgress(ctx: Context, taskId: String, title: String, percent: Int, text: String) {
+    /** Percent directly in title: [${percent}%] Title */
+    fun downloadProgress(ctx: Context, taskId: String, title: String, percent: Int, text: String, thumbnailUrl: String = "") {
         if (!canNotify(ctx)) return
+        if (thumbnailUrl.isNotBlank()) cacheThumbnail(taskId, thumbnailUrl)
         val now = System.currentTimeMillis()
         synchronized(lastProgressAt) {
             val last = lastProgressAt[taskId] ?: 0L
             if (now - last < 800 && percent < 100) return   // avoid notification rate limiting
             lastProgressAt[taskId] = now
         }
-        val b = progressBuilder(ctx, taskId, title).setContentText(text)
+        val b = progressBuilder(ctx, taskId, title, percent).setContentText(text)
         if (percent >= 0) b.setProgress(100, percent.coerceIn(0, 100), false)
         else b.setProgress(0, 0, true)
         nm(ctx).notify(notifyId(taskId), b.build())
     }
 
-    private fun progressBuilder(ctx: Context, taskId: String, title: String): NotificationCompat.Builder {
+    private fun progressBuilder(ctx: Context, taskId: String, title: String, percent: Int): NotificationCompat.Builder {
         val cancel = PendingIntent.getBroadcast(
             ctx, notifyId(taskId),
             Intent(ctx, DownloadActionReceiver::class.java).apply {
@@ -106,45 +149,66 @@ object Notifier {
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        return NotificationCompat.Builder(ctx, CH_PROGRESS)
+
+        val titleWithPercent = if (percent >= 0) "[$percent%] $title" else "[הורדה...] $title"
+
+        val builder = NotificationCompat.Builder(ctx, CH_PROGRESS)
             .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle(title)
+            .setContentTitle(titleWithPercent)
             .setContentIntent(openAppIntent(ctx))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .addAction(0, "ביטול", cancel)
+
+        getCachedBitmap(taskId)?.let {
+            builder.setLargeIcon(it)
+        }
+
+        return builder
     }
 
-    fun downloadFinished(ctx: Context, taskId: String, title: String) {
+    fun downloadFinished(ctx: Context, taskId: String, title: String, filePath: String = "") {
         synchronized(lastProgressAt) { lastProgressAt.remove(taskId) }
         if (!canNotify(ctx)) return
-        val n = NotificationCompat.Builder(ctx, CH_DONE)
+
+        val builder = NotificationCompat.Builder(ctx, CH_DONE)
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
-            .setContentTitle("ההורדה הסתיימה")
-            .setContentText(title)
-            .setContentIntent(openAppIntent(ctx))
+            .setContentTitle("[100%] הושלם: $title")
+            .setContentText("לחיצה להפעלת הקובץ בספרייה")
+            .setContentIntent(openAppIntent(ctx, playTrackId = taskId, playFilePath = filePath, requestCode = notifyId(taskId)))
             .setAutoCancel(true)
-            .build()
-        nm(ctx).notify(notifyId(taskId), n)   // same id => replaces the progress notification
+
+        getCachedBitmap(taskId)?.let {
+            builder.setLargeIcon(it)
+        }
+
+        nm(ctx).notify(notifyId(taskId), builder.build())   // replaces progress notification
+        thumbUrls.remove(taskId)
     }
 
     fun downloadFailed(ctx: Context, taskId: String, title: String, reason: String) {
         synchronized(lastProgressAt) { lastProgressAt.remove(taskId) }
         if (!canNotify(ctx)) return
-        val n = NotificationCompat.Builder(ctx, CH_DONE)
+        val builder = NotificationCompat.Builder(ctx, CH_DONE)
             .setSmallIcon(android.R.drawable.stat_notify_error)
-            .setContentTitle("ההורדה נכשלה")
-            .setContentText("$title — $reason")
+            .setContentTitle("[נכשל] $title")
+            .setContentText(reason)
             .setStyle(NotificationCompat.BigTextStyle().bigText("$title\n$reason"))
             .setContentIntent(openAppIntent(ctx))
             .setAutoCancel(true)
-            .build()
-        nm(ctx).notify(notifyId(taskId), n)
+
+        getCachedBitmap(taskId)?.let {
+            builder.setLargeIcon(it)
+        }
+
+        nm(ctx).notify(notifyId(taskId), builder.build())
+        thumbUrls.remove(taskId)
     }
 
     fun cancel(ctx: Context, key: String) {
         synchronized(lastProgressAt) { lastProgressAt.remove(key) }
+        thumbUrls.remove(key)
         nm(ctx).cancel(notifyId(key))
     }
 
@@ -166,7 +230,7 @@ object Notifier {
             .setContentTitle("סרטון חדש ב-$channel")
             .setContentText(title)
             .setStyle(NotificationCompat.BigTextStyle().bigText(title))
-            .setContentIntent(openAppIntent(ctx, videoId, notifyId("open_$videoId")))
+            .setContentIntent(openAppIntent(ctx, videoId = videoId, requestCode = notifyId("open_$videoId")))
             .addAction(0, "הורד שמע", download)
             .setAutoCancel(true)
             .build()

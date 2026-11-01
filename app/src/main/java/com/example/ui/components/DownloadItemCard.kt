@@ -1,5 +1,7 @@
 package com.example.ui.components
 
+import android.content.Intent
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -26,7 +28,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.Radio
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Button
@@ -50,6 +52,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -78,19 +81,36 @@ fun DownloadItemCard(
     onStopLiveRecording: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var isLogsExpanded by remember { mutableStateOf(false) }
-    var selectedLogTab by remember { mutableIntStateOf(0) }
-    var copiedFeedback by remember { mutableStateOf(false) }
+    val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
 
+    var isLogsExpanded by remember { mutableStateOf(false) }
+    // DEFAULT IS 1 (Hebrew notes / הערות בעברית) per user request #10!
+    var selectedLogTab by remember { mutableIntStateOf(1) }
+    var copiedFeedback by remember { mutableStateOf(false) }
+
+    fun copyUrl() {
+        clipboardManager.setText(AnnotatedString("https://www.youtube.com/watch?v=${task.videoId}"))
+        Toast.makeText(context, "הקישור הועתק ללוח", Toast.LENGTH_SHORT).show()
+    }
+
+    fun shareUrl() {
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, task.title)
+            putExtra(Intent.EXTRA_TEXT, "https://www.youtube.com/watch?v=${task.videoId}")
+        }
+        context.startActivity(Intent.createChooser(shareIntent, "שתף קישור"))
+    }
+
     Card(
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = SurfaceCard),
         modifier = modifier
             .fillMaxWidth()
             .testTag("download_task_card")
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+        Column(modifier = Modifier.padding(12.dp)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
@@ -106,14 +126,14 @@ fun DownloadItemCard(
                         .background(SurfaceDark)
                 )
 
-                Spacer(modifier = Modifier.width(12.dp))
+                Spacer(modifier = Modifier.width(10.dp))
 
-                // Title & Channel
+                // Title & Hebrew Status (with percentage included!)
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = task.title,
                         color = TextPrimary,
-                        fontSize = 14.sp,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -122,13 +142,16 @@ fun DownloadItemCard(
                     Text(
                         text = task.channel,
                         color = TextSecondary,
-                        fontSize = 12.sp,
+                        fontSize = 11.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = task.hebrewStatusText,
+                        text = if (task.status == DownloadStatus.DOWNLOADING && task.progressPercent > 0)
+                            "${task.hebrewStatusText} (${task.progressPercent}%)"
+                        else
+                            task.hebrewStatusText,
                         color = when (task.status) {
                             DownloadStatus.COMPLETED -> SuccessGreen
                             DownloadStatus.FAILED -> LiveBadgeColor
@@ -140,62 +163,87 @@ fun DownloadItemCard(
                     )
                 }
 
-                // Action or Status Icon
-                when (task.status) {
-                    DownloadStatus.COMPLETED -> {
+                // Copy & Share buttons (Requirement 9 & 10)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { copyUrl() }, modifier = Modifier.size(32.dp)) {
                         Icon(
-                            imageVector = Icons.Default.CheckCircle,
-                            contentDescription = "הושלם",
-                            tint = SuccessGreen,
-                            modifier = Modifier.size(24.dp)
+                            imageVector = Icons.Default.ContentCopy,
+                            contentDescription = "העתק קישור",
+                            tint = TextTertiary,
+                            modifier = Modifier.size(16.dp)
                         )
                     }
-                    DownloadStatus.FAILED -> {
+
+                    IconButton(onClick = { shareUrl() }, modifier = Modifier.size(32.dp)) {
                         Icon(
-                            imageVector = Icons.Default.Error,
-                            contentDescription = "שגיאה",
-                            tint = LiveBadgeColor,
-                            modifier = Modifier.size(24.dp)
+                            imageVector = Icons.Default.Share,
+                            contentDescription = "שתף קישור",
+                            tint = TextTertiary,
+                            modifier = Modifier.size(16.dp)
                         )
                     }
-                    DownloadStatus.RECORDING_LIVE -> {
-                        Button(
-                            onClick = onStopLiveRecording,
-                            colors = ButtonDefaults.buttonColors(containerColor = LiveBadgeColor),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.height(36.dp)
-                        ) {
-                            Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("עצור ושמור", fontSize = 11.sp)
-                        }
-                    }
-                    else -> {
-                        IconButton(onClick = onCancel) {
+
+                    // Action or Status Icon
+                    when (task.status) {
+                        DownloadStatus.COMPLETED -> {
                             Icon(
-                                imageVector = Icons.Default.Cancel,
-                                contentDescription = "בטל",
-                                tint = TextSecondary,
-                                modifier = Modifier.size(20.dp)
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = "הושלם",
+                                tint = SuccessGreen,
+                                modifier = Modifier
+                                    .padding(start = 2.dp)
+                                    .size(22.dp)
                             )
+                        }
+                        DownloadStatus.FAILED -> {
+                            Icon(
+                                imageVector = Icons.Default.Error,
+                                contentDescription = "שגיאה",
+                                tint = LiveBadgeColor,
+                                modifier = Modifier
+                                    .padding(start = 2.dp)
+                                    .size(22.dp)
+                            )
+                        }
+                        DownloadStatus.RECORDING_LIVE -> {
+                            Button(
+                                onClick = onStopLiveRecording,
+                                colors = ButtonDefaults.buttonColors(containerColor = LiveBadgeColor),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.height(32.dp)
+                            ) {
+                                Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("עצור", fontSize = 11.sp)
+                            }
+                        }
+                        else -> {
+                            IconButton(onClick = onCancel, modifier = Modifier.size(32.dp)) {
+                                Icon(
+                                    imageVector = Icons.Default.Cancel,
+                                    contentDescription = "בטל",
+                                    tint = TextSecondary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
                     }
                 }
             }
 
-            // Progress Bar & Diagnostics
+            // Progress Bar
             if (task.status == DownloadStatus.DOWNLOADING || task.status == DownloadStatus.CONNECTING || task.status == DownloadStatus.TRIMMING) {
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 LinearProgressIndicator(
                     progress = { (task.progressPercent / 100f).coerceIn(0f, 1f) },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(6.dp)
+                        .height(5.dp)
                         .clip(RoundedCornerShape(3.dp)),
                     color = ScarletRed,
                     trackColor = BorderDark
                 )
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(4.dp))
                 Row(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     modifier = Modifier.fillMaxWidth()
@@ -214,29 +262,29 @@ fun DownloadItemCard(
             }
 
             // Expandable Logs Toggle
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(8.dp))
                     .clickable { isLogsExpanded = !isLogsExpanded }
-                    .padding(vertical = 6.dp, horizontal = 4.dp)
+                    .padding(vertical = 4.dp, horizontal = 2.dp)
             ) {
                 Icon(
                     imageVector = Icons.Default.Terminal,
                     contentDescription = null,
                     tint = if (isLogsExpanded) NeonCyan else TextTertiary,
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier.size(15.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = if (task.rawLogs.isNotEmpty())
-                        "פלט מקורי של yt-dlp (${task.rawLogs.size} שורות)"
+                    text = if (selectedLogTab == 1)
+                        "הערות בעברית (${task.logs.size} רשומות • ${task.progressPercent}%)"
                     else
-                        "פרטי תהליך ופלט yt-dlp",
+                        "פלט מקורי של yt-dlp (${task.rawLogs.size} שורות)",
                     color = if (isLogsExpanded) NeonCyan else TextSecondary,
-                    fontSize = 12.sp,
+                    fontSize = 11.sp,
                     fontWeight = if (isLogsExpanded) FontWeight.SemiBold else FontWeight.Normal,
                     modifier = Modifier.weight(1f)
                 )
@@ -244,7 +292,7 @@ fun DownloadItemCard(
                     imageVector = if (isLogsExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
                     contentDescription = null,
                     tint = TextTertiary,
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(16.dp)
                 )
             }
 
@@ -253,7 +301,7 @@ fun DownloadItemCard(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 6.dp)
+                        .padding(top = 4.dp)
                 ) {
                     // Header controls: Tabs + Copy button
                     Row(
@@ -263,8 +311,25 @@ fun DownloadItemCard(
                             .fillMaxWidth()
                             .padding(bottom = 6.dp)
                     ) {
-                        // Segmented tabs
+                        // Segmented tabs (Tab 1 Hebrew is first and default!)
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            // Tab 1: Hebrew translated logs (DEFAULT)
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (selectedLogTab == 1) NeonCyan.copy(alpha = 0.2f) else SurfaceDark,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { selectedLogTab = 1 }
+                            ) {
+                                Text(
+                                    text = "הערות בעברית (${task.logs.size})",
+                                    color = if (selectedLogTab == 1) NeonCyan else TextSecondary,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+
                             // Tab 0: Raw yt-dlp
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
@@ -276,23 +341,6 @@ fun DownloadItemCard(
                                 Text(
                                     text = "פלט מקורי (${task.rawLogs.size})",
                                     color = if (selectedLogTab == 0) ScarletRed else TextSecondary,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                )
-                            }
-
-                            // Tab 1: Hebrew translated logs
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = if (selectedLogTab == 1) NeonCyan.copy(alpha = 0.2f) else SurfaceDark,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable { selectedLogTab = 1 }
-                            ) {
-                                Text(
-                                    text = "יומן בעברית (${task.logs.size})",
-                                    color = if (selectedLogTab == 1) NeonCyan else TextSecondary,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
@@ -316,7 +364,7 @@ fun DownloadItemCard(
                                 imageVector = if (copiedFeedback) Icons.Default.Check else Icons.Default.ContentCopy,
                                 contentDescription = "העתק פלט",
                                 tint = if (copiedFeedback) SuccessGreen else TextTertiary,
-                                modifier = Modifier.size(14.dp)
+                                modifier = Modifier.size(13.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
@@ -332,53 +380,18 @@ fun DownloadItemCard(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(min = 90.dp, max = 240.dp)
+                            .heightIn(min = 80.dp, max = 220.dp)
                             .clip(RoundedCornerShape(8.dp))
                             .background(Color(0xFF090D12))
                             .border(1.dp, BorderDark, RoundedCornerShape(8.dp))
-                            .padding(10.dp)
+                            .padding(8.dp)
                             .verticalScroll(scrollState)
                     ) {
-                        if (selectedLogTab == 0) {
-                            // Raw yt-dlp Output
-                            if (task.rawLogs.isEmpty()) {
-                                Text(
-                                    text = "ממתין לפלט תהליך ממנוע yt-dlp...",
-                                    color = TextTertiary,
-                                    fontSize = 11.sp,
-                                    fontFamily = FontFamily.Monospace
-                                )
-                            } else {
-                                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                    task.rawLogs.forEach { rawLine ->
-                                        val lineColor = when {
-                                            rawLine.startsWith("[cmd]") -> Color(0xFFFFD54F) // Gold/Yellow
-                                            rawLine.startsWith("[youtube]") || rawLine.startsWith("[info]") -> Color(0xFF00E5FF) // Cyan
-                                            rawLine.startsWith("[download]") -> Color(0xFF00E676) // Green
-                                            rawLine.startsWith("[Fixup") || rawLine.startsWith("[ExtractAudio]") -> Color(0xFFEA80FC) // Magenta
-                                            rawLine.contains("ERROR", ignoreCase = true) ||
-                                                rawLine.startsWith("[stderr]") ||
-                                                rawLine.startsWith("[error]") ||
-                                                rawLine.startsWith("[FATAL]") -> Color(0xFFFF5252) // Red
-                                            rawLine.contains("WARNING", ignoreCase = true) -> Color(0xFFFFA726) // Orange
-                                            rawLine.startsWith("[process]") || rawLine.startsWith("[success]") -> Color(0xFF1DE9B6) // Teal
-                                            else -> Color(0xFFCFD8DC) // Soft white/silver
-                                        }
-                                        Text(
-                                            text = rawLine,
-                                            color = lineColor,
-                                            fontSize = 10.5.sp,
-                                            fontFamily = FontFamily.Monospace,
-                                            lineHeight = 15.sp
-                                        )
-                                    }
-                                }
-                            }
-                        } else {
-                            // Hebrew logs
+                        if (selectedLogTab == 1) {
+                            // Hebrew logs (Default)
                             if (task.logs.isEmpty()) {
                                 Text(
-                                    text = "אין נתוני יומן בעברית עדיין...",
+                                    text = "ההורדה מתבצעת... (${task.progressPercent}%)",
                                     color = TextTertiary,
                                     fontSize = 11.sp
                                 )
@@ -394,8 +407,42 @@ fun DownloadItemCard(
                                                 else -> TextSecondary
                                             },
                                             fontSize = 11.sp,
-                                            fontFamily = FontFamily.Monospace,
                                             lineHeight = 16.sp
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            // Raw yt-dlp Output
+                            if (task.rawLogs.isEmpty()) {
+                                Text(
+                                    text = "ממתין לפלט תהליך ממנוע yt-dlp...",
+                                    color = TextTertiary,
+                                    fontSize = 11.sp,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            } else {
+                                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    task.rawLogs.forEach { rawLine ->
+                                        val lineColor = when {
+                                            rawLine.startsWith("[cmd]") -> Color(0xFFFFD54F)
+                                            rawLine.startsWith("[youtube]") || rawLine.startsWith("[info]") -> Color(0xFF00E5FF)
+                                            rawLine.startsWith("[download]") -> Color(0xFF00E676)
+                                            rawLine.startsWith("[Fixup") || rawLine.startsWith("[ExtractAudio]") -> Color(0xFFEA80FC)
+                                            rawLine.contains("ERROR", ignoreCase = true) ||
+                                                rawLine.startsWith("[stderr]") ||
+                                                rawLine.startsWith("[error]") ||
+                                                rawLine.startsWith("[FATAL]") -> Color(0xFFFF5252)
+                                            rawLine.contains("WARNING", ignoreCase = true) -> Color(0xFFFFA726)
+                                            rawLine.startsWith("[process]") || rawLine.startsWith("[success]") -> Color(0xFF1DE9B6)
+                                            else -> Color(0xFFCFD8DC)
+                                        }
+                                        Text(
+                                            text = rawLine,
+                                            color = lineColor,
+                                            fontSize = 10.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            lineHeight = 14.sp
                                         )
                                     }
                                 }

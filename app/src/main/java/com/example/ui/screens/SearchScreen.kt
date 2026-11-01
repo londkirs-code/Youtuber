@@ -1,5 +1,7 @@
 package com.example.ui.screens
 
+import android.content.Intent
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -20,38 +22,43 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.SuggestionChipDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.SavedChannelEntity
 import com.example.data.local.SavedVideoEntity
 import com.example.data.local.SearchHistoryEntity
+import com.example.data.model.AudioQuality
 import com.example.data.model.SearchResultItem
+import com.example.ui.components.VideoDetailDialog
 import com.example.ui.components.VideoResultCard
 import com.example.ui.components.YouTubeSearchBar
 import com.example.ui.theme.NeonCyan
@@ -62,6 +69,7 @@ import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.ui.theme.TextTertiary
 import com.example.ui.theme.WarningAmber
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -80,18 +88,50 @@ fun SearchScreen(
     savedChannels: List<SavedChannelEntity>,
     onToggleSaveVideo: (SearchResultItem) -> Unit,
     onToggleSaveChannel: (String) -> Unit,
-    onDownload: (SearchResultItem) -> Unit,
+    onDownload: (SearchResultItem, AudioQuality?) -> Unit,
     onTrim: (SearchResultItem) -> Unit,
     onDismissSuggestions: () -> Unit = {},
+    onLoadMore: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
+    val listState = rememberLazyListState()
+
+    var selectedDetailItem by remember { mutableStateOf<SearchResultItem?>(null) }
+
+    fun copyUrl(videoId: String) {
+        clipboardManager.setText(AnnotatedString("https://www.youtube.com/watch?v=$videoId"))
+        Toast.makeText(context, "הקישור הועתק ללוח", Toast.LENGTH_SHORT).show()
+    }
+
+    fun shareUrl(videoId: String, title: String) {
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, title)
+            putExtra(Intent.EXTRA_TEXT, "https://www.youtube.com/watch?v=$videoId")
+        }
+        context.startActivity(Intent.createChooser(shareIntent, "שתף קישור ליוטיוב"))
+    }
+
+    // Auto load next results when user reaches near end of list (Requirement 4)
+    LaunchedEffect(listState, searchResults.size) {
+        snapshotFlow {
+            val total = listState.layoutInfo.totalItemsCount
+            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            total > 0 && lastVisible >= total - 3
+        }.distinctUntilChanged().collect { shouldLoadMore ->
+            if (shouldLoadMore && !isSearching) {
+                onLoadMore()
+            }
+        }
+    }
 
     Box(modifier = modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .padding(horizontal = 14.dp, vertical = 6.dp)
         ) {
             YouTubeSearchBar(
                 query = searchQuery,
@@ -105,9 +145,9 @@ fun SearchScreen(
                 onDismissSuggestions = onDismissSuggestions
             )
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
-            if (isSearching) {
+            if (isSearching && searchResults.isEmpty()) {
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
@@ -115,10 +155,10 @@ fun SearchScreen(
                         .weight(1f)
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator(color = ScarletRed, modifier = Modifier.size(40.dp))
+                        CircularProgressIndicator(color = ScarletRed, modifier = Modifier.size(36.dp))
                         Spacer(modifier = Modifier.height(12.dp))
                         Text(
-                            text = "מחפש סרטונים ושירים ביוטיוב...",
+                            text = "מחפש סרטונים וקבצי שמע...",
                             color = TextSecondary,
                             fontSize = 13.sp
                         )
@@ -126,7 +166,8 @@ fun SearchScreen(
                 }
             } else if (searchResults.isNotEmpty()) {
                 LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    state = listState,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(bottom = 96.dp),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -144,17 +185,33 @@ fun SearchScreen(
                             item = item,
                             isVideoSaved = isVideoSaved,
                             isChannelSaved = isChannelSaved,
+                            onClick = { selectedDetailItem = item },
+                            onCopyUrl = { copyUrl(item.id) },
+                            onShareUrl = { shareUrl(item.id, item.title) },
+                            onDownload = { onDownload(item, null) },
+                            onTrim = { onTrim(item) },
                             onToggleSaveVideo = { onToggleSaveVideo(item) },
-                            onToggleSaveChannel = { onToggleSaveChannel(item.channelTitle) },
-                            onDownload = { onDownload(item) },
-                            onTrim = { onTrim(item) }
+                            onToggleSaveChannel = { onToggleSaveChannel(item.channelTitle) }
                         )
+                    }
+
+                    if (isSearching) {
+                        item {
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 12.dp)
+                            ) {
+                                CircularProgressIndicator(color = ScarletRed, modifier = Modifier.size(24.dp))
+                            }
+                        }
                     }
                 }
             } else {
                 // Empty search state - display Saved Channels & Saved Videos quick sections
                 LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
                     contentPadding = PaddingValues(bottom = 96.dp),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -168,16 +225,16 @@ fun SearchScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Icon(Icons.Default.Star, contentDescription = null, tint = WarningAmber, modifier = Modifier.size(18.dp))
+                                    Icon(Icons.Default.Star, contentDescription = null, tint = WarningAmber, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
                                         text = "ערוצים שמורים (${savedChannels.size})",
                                         color = TextPrimary,
-                                        fontSize = 14.sp,
+                                        fontSize = 13.sp,
                                         fontWeight = FontWeight.Bold
                                     )
                                 }
-                                Spacer(modifier = Modifier.height(8.dp))
+                                Spacer(modifier = Modifier.height(6.dp))
                                 LazyRow(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                                     modifier = Modifier.fillMaxWidth()
@@ -211,12 +268,12 @@ fun SearchScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Icon(Icons.Default.Bookmark, contentDescription = null, tint = ScarletRed, modifier = Modifier.size(18.dp))
+                                Icon(Icons.Default.Bookmark, contentDescription = null, tint = ScarletRed, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = "סרטונים ששמרת (${savedVideos.size})",
+                                    text = "קבצים ששמרת (${savedVideos.size})",
                                     color = TextPrimary,
-                                    fontSize = 14.sp,
+                                    fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
@@ -240,10 +297,13 @@ fun SearchScreen(
                                 item = resultItem,
                                 isVideoSaved = true,
                                 isChannelSaved = isChannelSaved,
+                                onClick = { selectedDetailItem = resultItem },
+                                onCopyUrl = { copyUrl(resultItem.id) },
+                                onShareUrl = { shareUrl(resultItem.id, resultItem.title) },
+                                onDownload = { onDownload(resultItem, null) },
+                                onTrim = { onTrim(resultItem) },
                                 onToggleSaveVideo = { onToggleSaveVideo(resultItem) },
-                                onToggleSaveChannel = { onToggleSaveChannel(sv.channelTitle) },
-                                onDownload = { onDownload(resultItem) },
-                                onTrim = { onTrim(resultItem) }
+                                onToggleSaveChannel = { onToggleSaveChannel(sv.channelTitle) }
                             )
                         }
                     }
@@ -259,13 +319,13 @@ fun SearchScreen(
                             ) {
                                 Column(
                                     horizontalAlignment = Alignment.CenterHorizontally,
-                                    modifier = Modifier.padding(horizontal = 32.dp)
+                                    modifier = Modifier.padding(horizontal = 24.dp)
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.MusicNote,
                                         contentDescription = null,
                                         tint = ScarletRed.copy(alpha = 0.6f),
-                                        modifier = Modifier.size(56.dp)
+                                        modifier = Modifier.size(52.dp)
                                     )
                                     Spacer(modifier = Modifier.height(14.dp))
                                     Text(
@@ -276,7 +336,7 @@ fun SearchScreen(
                                     )
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text(
-                                        text = "הקלד שם שיר, אמן או הדבק קישור ישיר לסרטון או שידור חי מיוטיוב. תוכל לשמור ערוצים וסרטונים מועדפים בלחיצה על כוכב או סימנייה!",
+                                        text = "הקלד שם סרטון, פודקאסט, אמן או הדבק קישור ישיר לסרטון או שידור חי מיוטיוב להורדה והאזנה מהירה.",
                                         color = TextSecondary,
                                         fontSize = 13.sp,
                                         textAlign = TextAlign.Center,
@@ -290,34 +350,29 @@ fun SearchScreen(
             }
         }
 
-        // Quick Paste FAB
-        FloatingActionButton(
-            onClick = {
-                val clipText = clipboardManager.getText()?.text ?: ""
-                if (clipText.isNotBlank()) {
-                    onQueryChanged(clipText)
-                    onSearch(clipText)
-                }
-            },
-            containerColor = ScarletRed,
-            contentColor = Color.White,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(bottom = 80.dp, end = 16.dp)
-                .testTag("quick_paste_fab")
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(horizontal = 14.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.ContentPaste,
-                    contentDescription = "הדבק מהלוח",
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.size(6.dp))
-                Text("הדבק קישור", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            }
+        // Dedicated Video Detail Dialog (Requirement 4)
+        selectedDetailItem?.let { item ->
+            val isVideoSaved = savedVideos.any { it.id == item.id }
+            val isChannelSaved = savedChannels.any { it.channelTitle == item.channelTitle }
+
+            VideoDetailDialog(
+                item = item,
+                isVideoSaved = isVideoSaved,
+                isChannelSaved = isChannelSaved,
+                onDismiss = { selectedDetailItem = null },
+                onDownload = { quality ->
+                    onDownload(item, quality)
+                    selectedDetailItem = null
+                },
+                onTrim = {
+                    onTrim(item)
+                    selectedDetailItem = null
+                },
+                onCopyUrl = { copyUrl(item.id) },
+                onShareUrl = { shareUrl(item.id, item.title) },
+                onToggleSaveVideo = { onToggleSaveVideo(item) },
+                onToggleSaveChannel = { onToggleSaveChannel(item.channelTitle) }
+            )
         }
     }
 }

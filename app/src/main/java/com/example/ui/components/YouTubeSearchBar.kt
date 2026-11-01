@@ -20,6 +20,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.TrendingUp
@@ -37,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -65,66 +67,98 @@ fun YouTubeSearchBar(
     modifier: Modifier = Modifier
 ) {
     val keyboardController = LocalSoftwareKeyboardController.current
+    val clipboardManager = LocalClipboardManager.current
 
     Column(modifier = modifier.fillMaxWidth()) {
-        OutlinedTextField(
-            value = query,
-            onValueChange = onQueryChanged,
-            placeholder = {
-                Text(
-                    text = "חפש שיר, אמן או הדבק קישור מיוטיוב...",
-                    color = TextSecondary,
-                    fontSize = 14.sp
-                )
-            },
-            leadingIcon = {
-                Icon(
-                    imageVector = Icons.Default.Search,
-                    contentDescription = "חיפוש",
-                    tint = ScarletRed,
-                    modifier = Modifier.size(22.dp)
-                )
-            },
-            trailingIcon = {
-                if (query.isNotEmpty()) {
-                    IconButton(
-                        onClick = {
-                            onDismissSuggestions()
-                            onClear()
-                        },
-                        modifier = Modifier.testTag("clear_search_btn")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Clear,
-                            contentDescription = "נקה חיפוש",
-                            tint = TextSecondary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
-            },
-            singleLine = true,
-            shape = RoundedCornerShape(24.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedContainerColor = SurfaceCard,
-                unfocusedContainerColor = SurfaceCard,
-                focusedBorderColor = ScarletRed,
-                unfocusedBorderColor = Color.Transparent,
-                focusedTextColor = TextPrimary,
-                unfocusedTextColor = TextPrimary
-            ),
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = {
-                keyboardController?.hide()
-                onDismissSuggestions()
-                onSearch(query)
-            }),
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("youtube_search_input")
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = onQueryChanged,
+                placeholder = {
+                    Text(
+                        text = "חפש סרטון, פודקאסט או הדבק קישור...",
+                        color = TextSecondary,
+                        fontSize = 13.sp
+                    )
+                },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = "חיפוש",
+                        tint = ScarletRed,
+                        modifier = Modifier.size(20.dp)
+                    )
+                },
+                trailingIcon = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (query.isNotEmpty()) {
+                            IconButton(
+                                onClick = {
+                                    onDismissSuggestions()
+                                    onClear()
+                                },
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .testTag("clear_search_btn")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Clear,
+                                    contentDescription = "נקה",
+                                    tint = TextSecondary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
 
-        // Real-time suggestions dropdown with dismiss header
+                        // Compact paste button right inside the search bar!
+                        IconButton(
+                            onClick = {
+                                val clip = clipboardManager.getText()?.text ?: ""
+                                if (clip.isNotBlank()) {
+                                    onQueryChanged(clip)
+                                    onSearch(clip)
+                                }
+                            },
+                            modifier = Modifier
+                                .size(32.dp)
+                                .testTag("paste_url_icon_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ContentPaste,
+                                contentDescription = "הדבק מהלוח",
+                                tint = ScarletRed,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(22.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = SurfaceCard,
+                    unfocusedContainerColor = SurfaceCard,
+                    focusedBorderColor = ScarletRed,
+                    unfocusedBorderColor = Color.Transparent,
+                    focusedTextColor = TextPrimary,
+                    unfocusedTextColor = TextPrimary
+                ),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = {
+                    keyboardController?.hide()
+                    onDismissSuggestions()
+                    onSearch(query)
+                }),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("youtube_search_input")
+            )
+        }
+
+        // Suggestions Dropdown
         AnimatedVisibility(visible = suggestions.isNotEmpty()) {
             Card(
                 colors = CardDefaults.cardColors(containerColor = SurfaceCard),
@@ -133,8 +167,7 @@ fun YouTubeSearchBar(
                     .fillMaxWidth()
                     .padding(top = 6.dp)
             ) {
-                Column(modifier = Modifier.padding(vertical = 6.dp)) {
-                    // Header with dismiss button
+                Column(modifier = Modifier.padding(vertical = 4.dp)) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -154,7 +187,7 @@ fun YouTubeSearchBar(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Close,
-                                contentDescription = "הסתר הצעות",
+                                contentDescription = "הסתר",
                                 tint = TextSecondary,
                                 modifier = Modifier.size(16.dp)
                             )
@@ -171,20 +204,20 @@ fun YouTubeSearchBar(
                                     onDismissSuggestions()
                                     onSearch(suggestion)
                                 }
-                                .padding(horizontal = 16.dp, vertical = 10.dp)
+                                .padding(horizontal = 16.dp, vertical = 9.dp)
                                 .testTag("suggestion_item")
                         ) {
                             Icon(
                                 imageVector = Icons.Default.TrendingUp,
                                 contentDescription = null,
                                 tint = ScarletRed,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(16.dp)
                             )
-                            Spacer(modifier = Modifier.width(12.dp))
+                            Spacer(modifier = Modifier.width(10.dp))
                             Text(
                                 text = suggestion,
                                 color = TextPrimary,
-                                fontSize = 14.sp,
+                                fontSize = 13.sp,
                                 modifier = Modifier.weight(1f)
                             )
                         }
@@ -193,9 +226,9 @@ fun YouTubeSearchBar(
             }
         }
 
-        // Persistent Search History with delete actions
+        // Persistent Search History
         if (query.isEmpty() && history.isNotEmpty()) {
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(8.dp))
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -206,11 +239,11 @@ fun YouTubeSearchBar(
                         imageVector = Icons.Default.History,
                         contentDescription = null,
                         tint = ScarletRed,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(15.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "היסטוריית חיפושים (${history.size})",
+                        text = "חיפושים אחרונים (${history.size})",
                         color = TextPrimary,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
@@ -219,7 +252,7 @@ fun YouTubeSearchBar(
 
                 TextButton(
                     onClick = onClearAllHistory,
-                    modifier = Modifier.height(30.dp)
+                    modifier = Modifier.height(28.dp)
                 ) {
                     Text("נקה הכל", color = TextTertiary, fontSize = 11.sp)
                 }
@@ -228,7 +261,7 @@ fun YouTubeSearchBar(
             Spacer(modifier = Modifier.height(4.dp))
 
             FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -241,14 +274,14 @@ fun YouTubeSearchBar(
                         },
                         label = {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(item.query, fontSize = 12.sp, color = TextPrimary)
-                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(item.query, fontSize = 11.sp, color = TextPrimary)
+                                Spacer(modifier = Modifier.width(4.dp))
                                 Icon(
                                     imageVector = Icons.Default.Close,
                                     contentDescription = "מחק מההיסטוריה",
                                     tint = TextTertiary,
                                     modifier = Modifier
-                                        .size(14.dp)
+                                        .size(13.dp)
                                         .clickable { onDeleteHistoryItem(item.query) }
                                 )
                             }

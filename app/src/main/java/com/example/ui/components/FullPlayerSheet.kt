@@ -6,21 +6,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.FastForward
-import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Pause
@@ -46,6 +41,8 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -69,6 +66,7 @@ import com.example.ui.theme.SurfaceCard
 import com.example.ui.theme.SurfaceDark
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.ui.theme.TextTertiary
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -92,8 +90,8 @@ fun FullPlayerSheet(
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var isDraggingSlider by remember { androidx.compose.runtime.mutableStateOf(false) }
-    var draggedPositionMs by remember { androidx.compose.runtime.mutableLongStateOf(0L) }
+    var isDraggingSlider by remember { mutableStateOf(false) }
+    var draggedPositionMs by remember { mutableLongStateOf(0L) }
 
     val displayPosition = if (isDraggingSlider) draggedPositionMs else currentPositionMs
     val progressFraction = if (durationMs > 0) (displayPosition.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
@@ -104,45 +102,43 @@ fun FullPlayerSheet(
         containerColor = ObsidianDark,
         modifier = Modifier.testTag("full_player_sheet")
     ) {
+        // Compact single-page container (no scroll required!)
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 24.dp)
-                .verticalScroll(rememberScrollState())
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 4.dp)
         ) {
-            // Header with down arrow
+            // Header Bar
             Row(
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                IconButton(onClick = onDismiss) {
+                IconButton(onClick = onDismiss, modifier = Modifier.size(36.dp)) {
                     Icon(
                         imageVector = Icons.Default.KeyboardArrowDown,
                         contentDescription = "סגור",
                         tint = TextSecondary,
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier.size(28.dp)
                     )
                 }
-                Spacer(modifier = Modifier.weight(1f))
                 Text(
                     text = "מתנגן כעת",
                     color = TextSecondary,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium
                 )
-                Spacer(modifier = Modifier.weight(1f))
-                Spacer(modifier = Modifier.size(32.dp))
+                Spacer(modifier = Modifier.size(36.dp))
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
-            // Large Album Artwork
+            // Compact Album Artwork (Drastically reduced to fit everything on-screen)
             Box(
                 modifier = Modifier
-                    .fillMaxWidth(0.82f)
-                    .aspectRatio(1f)
-                    .clip(RoundedCornerShape(24.dp))
+                    .size(105.dp)
+                    .clip(RoundedCornerShape(16.dp))
                     .background(SurfaceCard)
             ) {
                 AsyncImage(
@@ -153,31 +149,32 @@ fun FullPlayerSheet(
                 )
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
             // Title & Channel
             Text(
                 text = track.title,
                 color = TextPrimary,
-                fontSize = 18.sp,
+                fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth()
             )
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = track.artist,
                 color = TextSecondary,
-                fontSize = 14.sp,
+                fontSize = 12.sp,
                 textAlign = TextAlign.Center,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
-            // Interactive Progress Bar
+            // Interactive Progress Bar (Compact)
             Slider(
                 value = progressFraction,
                 onValueChange = {
@@ -195,6 +192,7 @@ fun FullPlayerSheet(
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
+                    .height(28.dp)
                     .testTag("player_progress_slider")
             )
 
@@ -202,50 +200,50 @@ fun FullPlayerSheet(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(formatDuration(displayPosition), color = TextSecondary, fontSize = 12.sp)
-                Text(formatDuration(durationMs), color = TextSecondary, fontSize = 12.sp)
+                Text(formatDuration(displayPosition), color = TextTertiary, fontSize = 11.sp)
+                Text(formatDuration(durationMs), color = TextTertiary, fontSize = 11.sp)
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
-            // Primary Playback Controls with 10s Rewind/Forward
+            // Primary Playback Controls Row
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                IconButton(onClick = onToggleShuffle) {
+                IconButton(onClick = onToggleShuffle, modifier = Modifier.size(36.dp)) {
                     Icon(
                         imageVector = Icons.Default.Shuffle,
                         contentDescription = "ערבב",
                         tint = if (isShuffle) ScarletRed else TextSecondary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                IconButton(onClick = onRewind10s, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        imageVector = Icons.Default.Replay10,
+                        contentDescription = "10 שניות אחורה",
+                        tint = TextPrimary,
                         modifier = Modifier.size(24.dp)
                     )
                 }
 
-                IconButton(onClick = onRewind10s) {
+                IconButton(onClick = onPrevious, modifier = Modifier.size(40.dp)) {
                     Icon(
-                        imageVector = Icons.Default.Replay10,
-                        contentDescription = "10 שניות אחורה",
+                        imageVector = Icons.Default.SkipPrevious,
+                        contentDescription = "הקודם",
                         tint = TextPrimary,
                         modifier = Modifier.size(28.dp)
                     )
                 }
 
-                IconButton(onClick = onPrevious) {
-                    Icon(
-                        imageVector = Icons.Default.SkipPrevious,
-                        contentDescription = "הקודם",
-                        tint = TextPrimary,
-                        modifier = Modifier.size(34.dp)
-                    )
-                }
-
-                // Big Play / Pause Button
+                // Play / Pause Button
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .size(64.dp)
+                        .size(54.dp)
                         .clip(CircleShape)
                         .background(ScarletRed)
                 ) {
@@ -259,30 +257,30 @@ fun FullPlayerSheet(
                             imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                             contentDescription = if (isPlaying) "השהה" else "נגן",
                             tint = Color.White,
-                            modifier = Modifier.size(36.dp)
+                            modifier = Modifier.size(30.dp)
                         )
                     }
                 }
 
-                IconButton(onClick = onNext) {
+                IconButton(onClick = onNext, modifier = Modifier.size(40.dp)) {
                     Icon(
                         imageVector = Icons.Default.SkipNext,
                         contentDescription = "הבא",
-                        tint = TextPrimary,
-                        modifier = Modifier.size(34.dp)
-                    )
-                }
-
-                IconButton(onClick = onForward10s) {
-                    Icon(
-                        imageVector = Icons.Default.Forward10,
-                        contentDescription = "10 שניות קדימה",
                         tint = TextPrimary,
                         modifier = Modifier.size(28.dp)
                     )
                 }
 
-                IconButton(onClick = onToggleRepeat) {
+                IconButton(onClick = onForward10s, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        imageVector = Icons.Default.Forward10,
+                        contentDescription = "10 שניות קדימה",
+                        tint = TextPrimary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+
+                IconButton(onClick = onToggleRepeat, modifier = Modifier.size(36.dp)) {
                     Icon(
                         imageVector = when (repeatMode) {
                             RepeatMode.ONE -> Icons.Default.RepeatOne
@@ -291,20 +289,20 @@ fun FullPlayerSheet(
                         },
                         contentDescription = "חזרה",
                         tint = if (repeatMode != RepeatMode.OFF) ScarletRed else TextSecondary,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            // EXACT SPEED CONTROLLER (Requirement 2 & 5)
+            // EXACT SPEED CONTROLLER (Compact, immediately visible without scrolling)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
+                    .clip(RoundedCornerShape(14.dp))
                     .background(SurfaceDark)
-                    .padding(14.dp)
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
             ) {
                 Column {
                     Row(
@@ -317,33 +315,33 @@ fun FullPlayerSheet(
                                 imageVector = Icons.Default.Speed,
                                 contentDescription = null,
                                 tint = NeonCyan,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "מהירות נגינה מדויקת",
+                                text = "מהירות נגינה",
                                 color = TextPrimary,
-                                fontSize = 13.sp,
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
                         }
 
-                        // Exact Stepper Controls (- 0.05x, + 0.05x)
+                        // Stepper Controls (- 0.05x, + 0.05x)
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             IconButton(
                                 onClick = {
                                     val newSpeed = (playbackSpeed - 0.05f).coerceAtLeast(0.25f)
                                     onSetSpeed((newSpeed * 100).toInt() / 100f)
                                 },
-                                modifier = Modifier.size(30.dp)
+                                modifier = Modifier.size(26.dp)
                             ) {
-                                Icon(Icons.Default.Remove, contentDescription = "האט", tint = TextPrimary, modifier = Modifier.size(16.dp))
+                                Icon(Icons.Default.Remove, contentDescription = "האט", tint = TextPrimary, modifier = Modifier.size(14.dp))
                             }
 
                             Text(
                                 text = String.format("%.2fx", playbackSpeed),
                                 color = ScarletRed,
-                                fontSize = 15.sp,
+                                fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier.padding(horizontal = 4.dp)
                             )
@@ -353,9 +351,9 @@ fun FullPlayerSheet(
                                     val newSpeed = (playbackSpeed + 0.05f).coerceAtMost(3.00f)
                                     onSetSpeed((newSpeed * 100).toInt() / 100f)
                                 },
-                                modifier = Modifier.size(30.dp)
+                                modifier = Modifier.size(26.dp)
                             ) {
-                                Icon(Icons.Default.Add, contentDescription = "האץ", tint = TextPrimary, modifier = Modifier.size(16.dp))
+                                Icon(Icons.Default.Add, contentDescription = "האץ", tint = TextPrimary, modifier = Modifier.size(14.dp))
                             }
                         }
                     }
@@ -373,20 +371,22 @@ fun FullPlayerSheet(
                             activeTrackColor = NeonCyan,
                             inactiveTrackColor = SurfaceCard
                         ),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(24.dp)
                     )
 
-                    // Quick Preset Chips
+                    // Quick Preset Chips (0.75x, 1x, 1.25x, 1.5x, 1.75x, 2x)
                     Row(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f).forEach { preset ->
+                        listOf(0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f).forEach { preset ->
                             val isSelected = kotlin.math.abs(playbackSpeed - preset) < 0.02f
                             FilterChip(
                                 selected = isSelected,
                                 onClick = { onSetSpeed(preset) },
-                                label = { Text("${preset}x", fontSize = 11.sp) },
+                                label = { Text("${preset}x".replace(".0x", "x"), fontSize = 10.sp) },
                                 colors = FilterChipDefaults.filterChipColors(
                                     selectedContainerColor = ScarletRed,
                                     selectedLabelColor = Color.White,
@@ -394,14 +394,15 @@ fun FullPlayerSheet(
                                     labelColor = TextSecondary
                                 ),
                                 border = null,
-                                shape = CircleShape
+                                shape = CircleShape,
+                                modifier = Modifier.height(28.dp)
                             )
                         }
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(16.dp))
         }
     }
 }
