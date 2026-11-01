@@ -1,10 +1,14 @@
 package com.example
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInVertically
@@ -41,7 +45,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.example.data.model.DownloadStatus
+import com.example.notify.Notifier
 import com.example.ui.components.AudioTrimmerDialog
 import com.example.ui.components.FullPlayerSheet
 import com.example.ui.components.MiniPlayer
@@ -61,9 +67,20 @@ import com.example.viewmodel.MainViewModel
 class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
 
+    // Android 13+: notifications need a runtime permission
+    private val notificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* nothing to do */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
 
         handleIncomingShareIntent(intent)
 
@@ -82,6 +99,14 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIncomingShareIntent(intent: Intent?) {
+        // Tap on a "new video" notification -> open the video card
+        val openVideoId = intent?.getStringExtra(Notifier.EXTRA_OPEN_VIDEO_ID)
+        if (!openVideoId.isNullOrBlank()) {
+            intent?.removeExtra(Notifier.EXTRA_OPEN_VIDEO_ID)
+            viewModel.onSearchQueryChanged("https://www.youtube.com/watch?v=$openVideoId")
+            viewModel.selectTab(0)
+            return
+        }
         if (intent?.action == Intent.ACTION_SEND && intent.type == "text/plain") {
             val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT) ?: ""
             if (sharedText.isNotBlank()) {

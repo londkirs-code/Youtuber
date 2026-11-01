@@ -9,7 +9,8 @@ data class SearchResultItem(
     val thumbnailUrl: String,
     val viewsText: String,
     val uploadedText: String,
-    val isLive: Boolean = false
+    val isLive: Boolean = false,
+    val channelId: String = ""
 )
 
 enum class DownloadStatus {

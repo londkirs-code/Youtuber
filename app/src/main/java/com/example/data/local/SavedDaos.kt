@@ -48,4 +48,17 @@ interface SavedMediaDao {
 
     @Query("DELETE FROM saved_channels WHERE channelTitle = :channelTitle")
     suspend fun deleteSavedChannel(channelTitle: String)
+
+    // New-video notifications
+    @Query("SELECT * FROM saved_channels")
+    suspend fun getSavedChannelsOnce(): List<SavedChannelEntity>
+
+    @Query("UPDATE saved_channels SET channelId = :channelId WHERE channelTitle = :channelTitle")
+    suspend fun updateChannelId(channelTitle: String, channelId: String)
+
+    @Query("UPDATE saved_channels SET lastSeenVideoId = :videoId WHERE channelTitle = :channelTitle")
+    suspend fun updateLastSeen(channelTitle: String, videoId: String)
+
+    @Query("UPDATE saved_channels SET notifyNewVideos = :enabled WHERE channelTitle = :channelTitle")
+    suspend fun setChannelNotify(channelTitle: String, enabled: Boolean)
 }

@@ -20,7 +20,14 @@ android {
     versionName = "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+    // yt-dlp + python + ffmpeg are native libraries. arm64 only keeps the APK small enough for GitHub
+    // (add "armeabi-v7a" for very old 32-bit phones; the APK grows by ~25 MB per extra ABI).
+    ndk { abiFilters += listOf("arm64-v8a") }
   }
+
+  // Required: python/ffmpeg libraries must be extracted to disk
+  packaging { jniLibs { useLegacyPackaging = true } }
 
   // Do not remove or modify these signingConfigs. They are necessary for building, installing,
   // and updating Android apps in AI Studio.
@@ -105,6 +112,10 @@ dependencies {
   // implementation(libs.logging.interceptor)
   // implementation(libs.moshi.kotlin)
   implementation(libs.okhttp)
+  // NEW: yt-dlp engine (extraction + download), ffmpeg helper, and background checks for new videos
+  implementation(libs.youtubedl.library)
+  implementation(libs.youtubedl.ffmpeg)
+  implementation(libs.androidx.work.runtime.ktx)
   // implementation(libs.retrofit)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)

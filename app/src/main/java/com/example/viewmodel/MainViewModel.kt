@@ -8,6 +8,7 @@ import android.content.ServiceConnection
 import android.os.IBinder
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.App
 import com.example.data.local.AppDatabase
 import com.example.data.local.PlaylistEntity
 import com.example.data.local.PlaylistTrackCrossRef
@@ -24,6 +25,7 @@ import com.example.data.model.UserSettings
 import com.example.download.DownloadManager
 import com.example.network.YouTubeEngine
 import com.example.service.AudioPlayerService
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -32,10 +34,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val database = AppDatabase.getDatabase(application)
-    val downloadManager = DownloadManager(application)
+    // One shared instance (also used by notification buttons)
+    val downloadManager: DownloadManager = (application as App).downloadManager
 
     // Navigation Tab (0: Search, 1: Downloads, 2: Library, 3: Settings)
     private val _currentTab = MutableStateFlow(0)
@@ -68,6 +72,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val isSearching: StateFlow<Boolean> = _isSearching.asStateFlow()
 
     private var suggestionDebounceJob: Job? = null
+    private var searchJob: Job? = null
 
     // Trimmer Dialog state
     private val _trimTarget = MutableStateFlow<SearchResultItem?>(null)
@@ -150,12 +155,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         application.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
     }
 
+    /** A real YouTube link (not just a word that happens to be 11 characters long). */
+    private fun isYoutubeLink(text: String): Boolean =
+        (text.contains("youtu.be/") || text.contains("youtube.com/")) &&
+            YouTubeEngine.extractVideoId(text) != null
+
     fun onSearchQueryChanged(newQuery: String) {
         _searchQuery.value = newQuery
         suggestionDebounceJob?.cancel()
 
         if (newQuery.isBlank()) {
             _searchSuggestions.value = emptyList()
+            return
+        }
+
+        // Pasted link: resolve immediately (no debounce, no suggestions, no search button)
+        if (isYoutubeLink(newQuery)) {
+            _searchSuggestions.value = emptyList()
+            val url = Regex("https?://\\S+").find(newQuery)?.value ?: newQuery.trim()
+            executeSearch(url)
             return
         }
 
@@ -173,12 +191,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _searchSuggestions.value = emptyList()
         _isSearching.value = true
 
-        // Persist to Room search history
-        viewModelScope.launch {
-            database.searchHistoryDao().insertSearch(SearchHistoryEntity(query = q))
+        // Persist to Room search history (links are not worth keeping)
+        if (!isYoutubeLink(q)) {
+            viewModelScope.launch {
+                database.searchHistoryDao().insertSearch(SearchHistoryEntity(query = q))
+            }
         }
 
-        viewModelScope.launch {
+        // A newer search/paste cancels the older one so stale results never overwrite fresh ones
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch {
             val results = YouTubeEngine.searchVideos(q)
             _searchResults.value = results
             _isSearching.value = false
@@ -219,14 +241,46 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Saving a channel also turns on "new video" notifications for it
+     * (checked every ~15 minutes by ChannelCheckWorker).
+     */
     fun toggleSaveChannel(channelTitle: String) {
         if (channelTitle.isBlank()) return
         viewModelScope.launch {
+            val dao = database.savedMediaDao()
             val isAlreadySaved = savedChannels.value.any { it.channelTitle == channelTitle }
             if (isAlreadySaved) {
-                database.savedMediaDao().deleteSavedChannel(channelTitle)
-            } else {
-                database.savedMediaDao().saveChannel(SavedChannelEntity(channelTitle = channelTitle))
+                dao.deleteSavedChannel(channelTitle)
+                return@launch
+            }
+
+            // Find what we know about this channel from the visible results / saved videos
+            val fromResults = _searchResults.value.firstOrNull { it.channelTitle == channelTitle }
+            val seedVideoId = fromResults?.id
+                ?: savedVideos.value.firstOrNull { it.channelTitle == channelTitle }?.id
+                ?: ""
+            var channelId = fromResults?.channelId.orEmpty()
+
+            dao.saveChannel(
+                SavedChannelEntity(
+                    channelTitle = channelTitle,
+                    channelId = channelId,
+                    seedVideoId = seedVideoId
+                )
+            )
+
+            // Resolve the channel id + remember the newest video now, so only FUTURE uploads notify
+            withContext(Dispatchers.IO) {
+                if (channelId.isBlank() && seedVideoId.isNotBlank()) {
+                    channelId = YouTubeEngine.resolveChannelIdFromVideo(seedVideoId).orEmpty()
+                    if (channelId.isNotBlank()) dao.updateChannelId(channelTitle, channelId)
+                }
+                if (channelId.isNotBlank()) {
+                    YouTubeEngine.fetchChannelFeed(channelId).firstOrNull()?.let {
+                        dao.updateLastSeen(channelTitle, it.videoId)
+                    }
+                }
             }
         }
     }

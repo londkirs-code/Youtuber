@@ -1,5 +1,6 @@
 package com.example.data.local
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
@@ -28,5 +29,14 @@ data class SavedVideoEntity(
 data class SavedChannelEntity(
     @PrimaryKey
     val channelTitle: String,
-    val savedAt: Long = System.currentTimeMillis()
+    val savedAt: Long = System.currentTimeMillis(),
+    // --- new in DB v3: new-video notifications ---
+    @ColumnInfo(defaultValue = "''")
+    val channelId: String = "",          // UCxxxxxxxxxxxxxxxxxxxxxx (needed for the RSS feed)
+    @ColumnInfo(defaultValue = "''")
+    val seedVideoId: String = "",        // a video of this channel, used to discover channelId if missing
+    @ColumnInfo(defaultValue = "''")
+    val lastSeenVideoId: String = "",    // newest video we already know about
+    @ColumnInfo(defaultValue = "1")
+    val notifyNewVideos: Boolean = true
 )

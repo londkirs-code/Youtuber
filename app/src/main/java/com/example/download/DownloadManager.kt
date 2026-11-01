@@ -1,16 +1,21 @@
 package com.example.download
 
 import android.content.Context
+import android.media.MediaMetadataRetriever
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.util.Log
+import com.example.App
 import com.example.data.local.AppDatabase
 import com.example.data.local.TrackEntity
 import com.example.data.model.DownloadStatus
 import com.example.data.model.DownloadTask
 import com.example.data.model.TrimRange
 import com.example.data.model.UserSettings
-import com.example.network.YouTubeEngine
+import com.example.notify.Notifier
+import com.yausername.youtubedl_android.YoutubeDL
+import com.yausername.youtubedl_android.YoutubeDLException
+import com.yausername.youtubedl_android.YoutubeDLRequest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -21,11 +26,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import okhttp3.Request
 import java.io.File
-import java.io.FileOutputStream
-import java.io.InputStream
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 class DownloadManager(private val context: Context) {
     private val TAG = "DownloadManager"
@@ -35,8 +38,8 @@ class DownloadManager(private val context: Context) {
     private val _tasks = MutableStateFlow<List<DownloadTask>>(emptyList())
     val tasks: StateFlow<List<DownloadTask>> = _tasks.asStateFlow()
 
-    private val activeJobs = mutableMapOf<String, Job>()
-    private val liveRecordingActive = mutableMapOf<String, Boolean>()
+    private val activeJobs = ConcurrentHashMap<String, Job>()
+    private val liveStopRequested = ConcurrentHashMap.newKeySet<String>()
 
     private val musicDir: File by lazy {
         val dir = File(context.getExternalFilesDir(null), "Music")
@@ -75,6 +78,10 @@ class DownloadManager(private val context: Context) {
 
         _tasks.update { listOf(newTask) + it }
 
+        // Keep the process alive + show "download started" notification
+        DownloadService.start(context)
+        Notifier.downloadStarted(context, taskId, title)
+
         val job = scope.launch {
             executeDownload(taskId, videoId, title, channel, thumbnailUrl, isLive, trimRange, settings)
         }
@@ -92,6 +99,8 @@ class DownloadManager(private val context: Context) {
         trimRange: TrimRange?,
         settings: UserSettings
     ) {
+        var lastPercent = 0
+
         fun log(msg: String) {
             _tasks.update { list ->
                 list.map { if (it.id == taskId) it.copy(logs = it.logs + msg) else it }
@@ -107,6 +116,7 @@ class DownloadManager(private val context: Context) {
             hebrewStatus: String? = null,
             recordedSec: Long? = null
         ) {
+            if (progress >= 0) lastPercent = progress
             _tasks.update { list ->
                 list.map {
                     if (it.id == taskId) {
@@ -121,6 +131,18 @@ class DownloadManager(private val context: Context) {
                         )
                     } else it
                 }
+            }
+            // ---- notifications follow the task state ----
+            when (status) {
+                DownloadStatus.FAILED ->
+                    Notifier.downloadFailed(context, taskId, title, hebrewStatus ?: "שגיאה")
+                DownloadStatus.COMPLETED -> Unit // handled at the end of the download
+                DownloadStatus.RECORDING_LIVE ->
+                    Notifier.downloadProgress(context, taskId, title, -1, hebrewStatus ?: "מקליט שידור חי...")
+                DownloadStatus.DOWNLOADING ->
+                    Notifier.downloadProgress(context, taskId, title, lastPercent, hebrewStatus ?: "מוריד...")
+                else ->
+                    Notifier.downloadProgress(context, taskId, title, if (status == DownloadStatus.FINISHING) 100 else -1, hebrewStatus ?: "")
             }
         }
 
@@ -137,41 +159,49 @@ class DownloadManager(private val context: Context) {
             val networkType = if (isWifiConnected()) "Wi-Fi" else "נתונים סלולריים"
             log("[רשת] חיבור פעיל: $networkType")
 
-            updateState(DownloadStatus.CONNECTING, hebrewStatus = "מתחבר לשרת YouTube...")
-            log("[yt-dlp] מתחבר למנוע החילוץ ומנתח ערוצי שמע...")
+            updateState(DownloadStatus.CONNECTING, hebrewStatus = "מכין את מנוע yt-dlp...")
 
-            val streamInfo = YouTubeEngine.resolveVideoDetails(videoId)
-            if (streamInfo == null || streamInfo.streamUrl.isBlank()) {
-                log("[שגיאה] לא נמצא קישור הזרמת שמע תקין עבור הסרטון")
-                updateState(DownloadStatus.FAILED, hebrewStatus = "שגיאה: חילוץ קישור השמע נכשל")
+            val app = context.applicationContext as App
+            if (!app.awaitYtdlp()) {
+                log("[שגיאה] yt-dlp לא הופעל. בדוק שה-APK נבנה עם ספריות המנוע (abiFilters / extractNativeLibs).")
+                updateState(DownloadStatus.FAILED, hebrewStatus = "שגיאה: מנוע yt-dlp לא נטען")
                 return
             }
 
-            log("[yt-dlp] ערוץ שמע אותר בהצלחה: ${streamInfo.audioBitrateKbps} kbps, M4A/AAC מקורי ללא דחיסה")
-
             val sanitizedTitle = title.replace(Regex("[^a-zA-Z0-9א-ת _-]"), "").trim().ifEmpty { "Audio_$videoId" }
-            val rawFile = File(musicDir, "${sanitizedTitle}_raw_${System.currentTimeMillis()}.m4a")
+            val rawBase = File(musicDir, "${sanitizedTitle}_raw_${System.currentTimeMillis()}")
 
-            if (isLive || streamInfo.isLive) {
-                // Live broadcast recording flow
-                handleLiveStreamRecording(taskId, streamInfo.streamUrl, rawFile, ::log, ::updateState)
-            } else {
-                // Standard VOD audio download
-                handleVodDownload(taskId, streamInfo.streamUrl, rawFile, streamInfo.approxSizeBytes, ::log, ::updateState)
+            updateState(DownloadStatus.CONNECTING, hebrewStatus = "מתחבר ליוטיוב ומחלץ שמע...")
+
+            var rawFile: File? = null
+            try {
+                rawFile = runYtDlp(taskId, videoId, isLive, rawBase, ::log, ::updateState)
+            } catch (e: YoutubeDLException) {
+                // Most common cause of failures: yt-dlp is outdated. Update once and retry.
+                log("[yt-dlp] הורדה נכשלה: ${shortError(e)}")
+                log("[yt-dlp] מעדכן את yt-dlp ומנסה שוב...")
+                updateState(DownloadStatus.CONNECTING, hebrewStatus = "מעדכן את yt-dlp ומנסה שוב...")
+                app.updateYtdlp()
+                rawFile = runYtDlp(taskId, videoId, isLive, rawBase, ::log, ::updateState)
             }
 
-            if (!rawFile.exists() || rawFile.length() == 0L) {
+            if (rawFile == null || !rawFile.exists() || rawFile.length() == 0L) {
                 updateState(DownloadStatus.FAILED, hebrewStatus = "שגיאה: קובץ השמע לא נוצר")
                 return
             }
 
-            var finalFile = rawFile
-            val isTrimmed = trimRange != null && trimRange.endMs > trimRange.startMs
+            val ext = rawFile.extension.ifEmpty { "m4a" }
+            var finalFile: File = rawFile
+            val isTrimmed = trimRange != null && trimRange.endMs > trimRange.startMs && ext in TRIMMABLE_EXT
 
-            if (isTrimmed) {
+            if (trimRange != null && trimRange.endMs > trimRange.startMs && !isTrimmed) {
+                log("[חיתוך] הפורמט .$ext לא נתמך לחיתוך, נשמר הקובץ המלא.")
+            }
+
+            if (isTrimmed && trimRange != null) {
                 updateState(DownloadStatus.TRIMMING, hebrewStatus = "חותך מקטע שמע נבחר...")
                 log("[חיתוך] מפעיל MediaMuxer לחיתוך מקטע (${formatDuration(trimRange.startMs)} עד ${formatDuration(trimRange.endMs)})...")
-                val trimmedFile = File(musicDir, "${sanitizedTitle}_${System.currentTimeMillis()}.m4a")
+                val trimmedFile = File(musicDir, "${sanitizedTitle}_${System.currentTimeMillis()}.$ext")
 
                 val success = AudioTrimmer.trimM4A(
                     sourceFile = rawFile,
@@ -187,24 +217,25 @@ class DownloadManager(private val context: Context) {
                 } else {
                     log("[חיתוך] החיתוך נכשל, נשמר הקובץ המלא.")
                 }
-            } else {
-                val cleanFile = File(musicDir, "${sanitizedTitle}_${System.currentTimeMillis()}.m4a")
-                rawFile.renameTo(cleanFile)
-                finalFile = cleanFile
             }
 
-            updateState(DownloadStatus.FINISHING, progress = 100, hebrewStatus = "מטמיע פרטי שיר ותמונת עטיפה...")
-            log("[תגיות] מטמיע כותרת: '$title', אמן: '$channel', תמונת שער...")
+            if (finalFile == rawFile) {
+                val cleanFile = File(musicDir, "${sanitizedTitle}_${System.currentTimeMillis()}.$ext")
+                if (rawFile.renameTo(cleanFile)) finalFile = cleanFile
+            }
 
+            updateState(DownloadStatus.FINISHING, progress = 100, hebrewStatus = "שומר בספרייה...")
+
+            val fullDurationMs = fileDurationMs(finalFile)
             val track = TrackEntity(
                 id = videoId + "_" + System.currentTimeMillis(),
                 title = title,
                 artist = channel,
-                durationMs = if (isTrimmed) (trimRange.endMs - trimRange.startMs) else streamInfo.durationMs,
+                durationMs = if (isTrimmed && trimRange != null) (trimRange.endMs - trimRange.startMs) else fullDurationMs,
                 filePath = finalFile.absolutePath,
                 thumbnailUrl = thumbnailUrl,
                 fileSizeBytes = finalFile.length(),
-                isLiveCapture = isLive || streamInfo.isLive,
+                isLiveCapture = isLive,
                 isTrimmed = isTrimmed,
                 trimStartMs = trimRange?.startMs ?: 0L,
                 trimEndMs = trimRange?.endMs ?: 0L
@@ -225,139 +256,160 @@ class DownloadManager(private val context: Context) {
                     } else it
                 }
             }
+            Notifier.downloadFinished(context, taskId, title)
 
+        } catch (e: YoutubeDL.CanceledException) {
+            log("[ביטול] ההורדה בוטלה.")
+        } catch (e: YoutubeDLException) {
+            Log.e(TAG, "yt-dlp error", e)
+            val reason = friendlyError(e)
+            log("[שגיאה] ${shortError(e)}")
+            updateState(DownloadStatus.FAILED, hebrewStatus = reason)
         } catch (e: Exception) {
             Log.e(TAG, "Download error", e)
             log("[שגיאה קריטית] ${e.localizedMessage ?: "שגיאה בלתי צפויה"}")
             updateState(DownloadStatus.FAILED, hebrewStatus = "שגיאה במהלך ההורדה")
         } finally {
             activeJobs.remove(taskId)
-            liveRecordingActive.remove(taskId)
+            liveStopRequested.remove(taskId)
+            if (activeJobs.isEmpty()) DownloadService.stop(context)
         }
     }
 
-    private suspend fun handleVodDownload(
+    /**
+     * Runs yt-dlp itself (extraction + download). Returns the downloaded file, or null.
+     * yt-dlp is kept up to date, so it keeps working when YouTube changes its internals.
+     */
+    private suspend fun runYtDlp(
         taskId: String,
-        streamUrl: String,
-        destinationFile: File,
-        approxSizeBytes: Long,
+        videoId: String,
+        isLive: Boolean,
+        rawBase: File,
         log: (String) -> Unit,
         updateState: (DownloadStatus, Int, String?, String?, String?, String?, Long?) -> Unit
-    ) {
-        val request = Request.Builder()
-            .url(streamUrl)
-            .header("User-Agent", "Mozilla/5.0")
-            .build()
-
-        YouTubeEngine.client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw Exception("קריאת שרת החזרתה שגיאה: ${response.code}")
+    ): File? {
+        val request = YoutubeDLRequest("https://www.youtube.com/watch?v=$videoId").apply {
+            // Prefer native m4a (AAC) so no re-encoding is needed and the trimmer keeps working
+            addOption("-f", "bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio/best")
+            addOption("-o", rawBase.absolutePath + ".%(ext)s")
+            addOption("--no-playlist")
+            addOption("--no-mtime")
+            addOption("--newline")
+            addOption("--retries", "5")
+            addOption("--socket-timeout", "20")
+            if (isLive) {
+                addOption("--no-part")
+                addOption("--hls-use-mpegts")
             }
-
-            val body = response.body ?: throw Exception("גוף התשובה ריק")
-            val totalBytes = if (body.contentLength() > 0) body.contentLength() else approxSizeBytes
-            val totalSizeMb = if (totalBytes > 0) String.format("%.1f MB", totalBytes / (1024f * 1024f)) else "-- MB"
-
-            val input: InputStream = body.byteStream()
-            val output = FileOutputStream(destinationFile)
-            val buffer = ByteArray(32 * 1024)
-
-            var downloadedBytes = 0L
-            var lastTime = System.currentTimeMillis()
-            var bytesSinceLast = 0L
-
-            var bytesRead = 0
-            while (input.read(buffer).also { bytesRead = it } != -1) {
-                output.write(buffer, 0, bytesRead)
-                downloadedBytes += bytesRead
-                bytesSinceLast += bytesRead
-
-                val now = System.currentTimeMillis()
-                val delta = now - lastTime
-                if (delta >= 400) {
-                    val speedBytesSec = (bytesSinceLast * 1000f) / delta
-                    val speedText = if (speedBytesSec >= 1024 * 1024) {
-                        String.format("%.1f MB/s", speedBytesSec / (1024 * 1024))
-                    } else {
-                        String.format("%.0f KB/s", speedBytesSec / 1024)
-                    }
-
-                    val progress = if (totalBytes > 0) {
-                        ((downloadedBytes * 100) / totalBytes).toInt().coerceIn(0, 99)
-                    } else 50
-
-                    val downloadedMb = String.format("%.1f MB", downloadedBytes / (1024f * 1024f))
-                    val statusText = "מוריד נתוני שמע: $progress% ($downloadedMb מתוך $totalSizeMb)"
-
-                    updateState(DownloadStatus.DOWNLOADING, progress, speedText, downloadedMb, totalSizeMb, statusText, null)
-                    lastTime = now
-                    bytesSinceLast = 0L
-                }
-            }
-
-            output.flush()
-            output.close()
-            input.close()
         }
-    }
 
-    private suspend fun handleLiveStreamRecording(
-        taskId: String,
-        streamUrl: String,
-        destinationFile: File,
-        log: (String) -> Unit,
-        updateState: (DownloadStatus, Int, String?, String?, String?, String?, Long?) -> Unit
-    ) {
-        log("[שידור חי] מתחבר להזרמת לייב (HLS/Chunked)...")
-        updateState(DownloadStatus.RECORDING_LIVE, 0, "0 KB/s", "0 MB", "LIVE", "מקליט שידור חי...", 0L)
-        liveRecordingActive[taskId] = true
-
-        val request = Request.Builder()
-            .url(streamUrl)
-            .header("User-Agent", "Mozilla/5.0")
-            .build()
-
-        YouTubeEngine.client.newCall(request).execute().use { response ->
-            val body = response.body ?: throw Exception("גוף שידור חי ריק")
-            val input = body.byteStream()
-            val output = FileOutputStream(destinationFile)
-            val buffer = ByteArray(16 * 1024)
-
-            var recordedBytes = 0L
-            val startTime = System.currentTimeMillis()
-            var lastUpdate = System.currentTimeMillis()
-
-            var bytesRead = 0
-            while (liveRecordingActive[taskId] == true && input.read(buffer).also { bytesRead = it } != -1) {
-                output.write(buffer, 0, bytesRead)
-                recordedBytes += bytesRead
-
-                val now = System.currentTimeMillis()
-                if (now - lastUpdate >= 1000) {
-                    val durationSec = (now - startTime) / 1000
-                    val sizeMb = String.format("%.2f MB", recordedBytes / (1024f * 1024f))
-                    val statusText = "מקליט שידור חי: ${formatDuration(durationSec * 1000L)} ($sizeMb)"
-                    updateState(DownloadStatus.RECORDING_LIVE, -1, "LIVE", sizeMb, "LIVE", statusText, durationSec)
-                    lastUpdate = now
+        var ticker: Job? = null
+        if (isLive) {
+            log("[שידור חי] מתחיל הקלטה (yt-dlp)...")
+            updateState(DownloadStatus.RECORDING_LIVE, 0, "LIVE", "0 MB", "LIVE", "מקליט שידור חי...", 0L)
+            ticker = scope.launch {
+                var sec = 0L
+                while (isActive) {
+                    delay(1000)
+                    sec++
+                    updateState(
+                        DownloadStatus.RECORDING_LIVE, -1, "LIVE", null, "LIVE",
+                        "מקליט שידור חי: ${formatDuration(sec * 1000L)}", sec
+                    )
                 }
             }
+        } else {
+            updateState(DownloadStatus.DOWNLOADING, 0, null, null, null, "מתחיל להוריד...", null)
+        }
 
-            output.flush()
-            output.close()
-            input.close()
+        try {
+            YoutubeDL.getInstance().execute(request, taskId) { progress, _, line ->
+                if (!isLive && progress >= 0f) {
+                    val percent = progress.toInt().coerceIn(0, 99)
+                    val m = PROGRESS_LINE.find(line)
+                    val total = m?.groupValues?.get(1)?.trim()
+                    val speed = m?.groupValues?.get(2)?.trim()
+                    val downloaded = total?.let { sizeToBytes(it) }?.let { bytesToText((it * percent / 100.0).toLong()) }
+                    updateState(
+                        DownloadStatus.DOWNLOADING, percent, speed, downloaded, total,
+                        "מוריד נתוני שמע: $percent%" + (if (total != null) " מתוך $total" else ""),
+                        null
+                    )
+                }
+            }
+        } catch (e: YoutubeDL.CanceledException) {
+            // For live streams "stop" is a normal ending: keep what was recorded
+            if (!(isLive && liveStopRequested.contains(taskId))) throw e
             log("[שידור חי] ההקלטה הופסקה ונשמרה.")
+        } finally {
+            ticker?.cancel()
         }
+
+        return musicDir.listFiles { f ->
+            f.name.startsWith(rawBase.name + ".") &&
+                !f.name.endsWith(".part") && !f.name.endsWith(".ytdl")
+        }?.maxByOrNull { it.length() }
     }
 
     fun stopLiveRecording(taskId: String) {
-        liveRecordingActive[taskId] = false
+        liveStopRequested.add(taskId)
+        YoutubeDL.getInstance().destroyProcessById(taskId)
     }
 
     fun cancelDownload(taskId: String) {
-        liveRecordingActive[taskId] = false
+        liveStopRequested.remove(taskId)
+        try {
+            YoutubeDL.getInstance().destroyProcessById(taskId)
+        } catch (e: Exception) {
+            Log.w(TAG, "destroyProcess failed", e)
+        }
         activeJobs[taskId]?.cancel()
         _tasks.update { it.filterNot { task -> task.id == taskId } }
+        Notifier.cancel(context, taskId)
     }
+
+    // ---------------- helpers ----------------
+
+    private fun shortError(e: Exception): String =
+        (e.message ?: "שגיאה לא ידועה").lines().lastOrNull { it.isNotBlank() }?.take(200) ?: "שגיאה לא ידועה"
+
+    private fun friendlyError(e: Exception): String {
+        val msg = e.message.orEmpty()
+        return when {
+            msg.contains("Sign in to confirm", ignoreCase = true) ||
+                msg.contains("not a bot", ignoreCase = true) -> "יוטיוב חוסמת (נדרש אימות). נסה שוב מאוחר יותר"
+            msg.contains("Private video", ignoreCase = true) -> "הסרטון פרטי"
+            msg.contains("unavailable", ignoreCase = true) -> "הסרטון לא זמין"
+            msg.contains("age", ignoreCase = true) && msg.contains("restricted", ignoreCase = true) -> "הסרטון מוגבל גיל"
+            msg.contains("Unable to download", ignoreCase = true) ||
+                msg.contains("urlopen", ignoreCase = true) -> "בעיית רשת"
+            else -> "שגיאה: חילוץ השמע נכשל"
+        }
+    }
+
+    private fun fileDurationMs(file: File): Long = try {
+        val r = MediaMetadataRetriever()
+        r.setDataSource(file.absolutePath)
+        val d = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+        r.release()
+        d
+    } catch (e: Exception) {
+        0L
+    }
+
+    private fun sizeToBytes(text: String): Long? {
+        val m = Regex("([\\d.]+)\\s*([KMG]?i?B)", RegexOption.IGNORE_CASE).find(text.replace("~", "")) ?: return null
+        val n = m.groupValues[1].toDoubleOrNull() ?: return null
+        val mult = when (m.groupValues[2].uppercase().first()) {
+            'K' -> 1024.0
+            'M' -> 1024.0 * 1024
+            'G' -> 1024.0 * 1024 * 1024
+            else -> 1.0
+        }
+        return (n * mult).toLong()
+    }
+
+    private fun bytesToText(bytes: Long): String = String.format("%.1f MB", bytes / (1024f * 1024f))
 
     private fun formatDuration(ms: Long): String {
         val totalSec = ms / 1000
@@ -370,5 +422,12 @@ class DownloadManager(private val context: Context) {
         } else {
             String.format("%02d:%02d", min, sec)
         }
+    }
+
+    companion object {
+        private val TRIMMABLE_EXT = setOf("m4a", "mp4", "aac")
+
+        // "[download]  45.3% of ~  3.42MiB at  1.20MiB/s ETA 00:02"
+        private val PROGRESS_LINE = Regex("of\\s+~?\\s*([\\d.]+\\s*[KMG]?i?B)(?:\\s+at\\s+([\\d.]+\\s*[KMG]?i?B/s))?")
     }
 }

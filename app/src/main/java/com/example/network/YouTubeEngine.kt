@@ -104,21 +104,9 @@ object YouTubeEngine {
         // If the query is directly a YouTube URL or video ID, resolve it directly
         val directId = extractVideoId(trimmed)
         if (directId != null) {
-            val single = resolveVideoDetails(directId)
-            if (single != null) {
-                return@withContext listOf(
-                    SearchResultItem(
-                        id = single.videoId,
-                        title = single.title,
-                        channelTitle = single.channel,
-                        durationText = single.durationText,
-                        durationMs = single.durationMs,
-                        thumbnailUrl = single.thumbnailUrl,
-                        viewsText = "קישור ישיר",
-                        uploadedText = if (single.isLive) "שידור חי" else "יוטיוב",
-                        isLive = single.isLive
-                    )
-                )
+            val basic = resolveBasicInfo(directId)
+            if (basic != null) {
+                return@withContext listOf(basic)
             }
         }
 
@@ -194,7 +182,8 @@ object YouTubeEngine {
                                     thumbnailUrl = thumb,
                                     viewsText = viewsFormatted,
                                     uploadedText = publishedText,
-                                    isLive = isLive
+                                    isLive = isLive,
+                                    channelId = obj.optString("authorId", "")
                                 )
                             )
                         }
@@ -237,6 +226,12 @@ object YouTubeEngine {
                         ?: videoRenderer.optJSONObject("shortBylineText")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")
                         ?: "ערוץ יוטיוב"
 
+                    val channelId = videoRenderer.optJSONObject("ownerText")
+                        ?.optJSONArray("runs")?.optJSONObject(0)
+                        ?.optJSONObject("navigationEndpoint")
+                        ?.optJSONObject("browseEndpoint")
+                        ?.optString("browseId").orEmpty()
+
                     val isLive = videoRenderer.optJSONArray("badges")?.let { badges ->
                         var live = false
                         for (b in 0 until badges.length()) {
@@ -269,7 +264,8 @@ object YouTubeEngine {
                             thumbnailUrl = thumb,
                             viewsText = viewsText,
                             uploadedText = publishedText,
-                            isLive = isLive
+                            isLive = isLive,
+                            channelId = channelId
                         )
                     )
                 }
@@ -279,6 +275,117 @@ object YouTubeEngine {
         }
         return list
     }
+
+    /**
+     * Instant metadata for a pasted link. Uses YouTube oEmbed (one tiny request, no tokens needed),
+     * so the card appears immediately. Duration is unknown at this stage.
+     */
+    suspend fun resolveBasicInfo(videoId: String): SearchResultItem? = withContext(Dispatchers.IO) {
+        try {
+            val url = "https://www.youtube.com/oembed?format=json&url=" +
+                URLEncoder.encode("https://www.youtube.com/watch?v=$videoId", "UTF-8")
+            val request = Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext null
+                val json = JSONObject(response.body?.string() ?: return@withContext null)
+                SearchResultItem(
+                    id = videoId,
+                    title = json.optString("title", "סרטון"),
+                    channelTitle = json.optString("author_name", "ערוץ יוטיוב"),
+                    durationText = "--:--",
+                    durationMs = 0L,
+                    thumbnailUrl = "https://i.ytimg.com/vi/$videoId/hqdefault.jpg",
+                    viewsText = "קישור ישיר",
+                    uploadedText = "יוטיוב",
+                    isLive = false
+                )
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "oEmbed failed", e)
+            null
+        }
+    }
+
+    data class FeedEntry(val videoId: String, val title: String, val published: String)
+
+    private val CHANNEL_ID_REGEXES = listOf(
+        Pattern.compile("/channel/(UC[0-9A-Za-z_-]{22})"),
+        Pattern.compile("\"externalId\":\"(UC[0-9A-Za-z_-]{22})\""),
+        Pattern.compile("\"channelId\":\"(UC[0-9A-Za-z_-]{22})\""),
+        Pattern.compile("channel_id=(UC[0-9A-Za-z_-]{22})")
+    )
+
+    /** video -> oEmbed author_url -> channel page -> channelId (UC...). */
+    suspend fun resolveChannelIdFromVideo(videoId: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val oembed = "https://www.youtube.com/oembed?format=json&url=" +
+                URLEncoder.encode("https://www.youtube.com/watch?v=$videoId", "UTF-8")
+            val authorUrl = client.newCall(
+                Request.Builder().url(oembed).header("User-Agent", "Mozilla/5.0").build()
+            ).execute().use { r ->
+                if (!r.isSuccessful) return@use null
+                JSONObject(r.body?.string() ?: return@use null).optString("author_url", "")
+            }
+            if (authorUrl.isNullOrBlank()) return@withContext null
+
+            // Already a /channel/UC... url
+            for (p in CHANNEL_ID_REGEXES.take(1)) {
+                val m = p.matcher(authorUrl)
+                if (m.find()) return@withContext m.group(1)
+            }
+
+            // @handle url -> read the page
+            val html = client.newCall(
+                Request.Builder().url(authorUrl)
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36")
+                    .header("Accept-Language", "en-US,en;q=0.9")
+                    .header("Cookie", "CONSENT=YES+1; SOCS=CAI")
+                    .build()
+            ).execute().use { r ->
+                if (!r.isSuccessful) return@use ""
+                r.body?.string().orEmpty()
+            }
+            for (p in CHANNEL_ID_REGEXES) {
+                val m = p.matcher(html)
+                if (m.find()) return@withContext m.group(1)
+            }
+            null
+        } catch (e: Exception) {
+            Log.w(TAG, "resolveChannelIdFromVideo failed", e)
+            null
+        }
+    }
+
+    /** Latest ~15 uploads of a channel from the public RSS feed (newest first). */
+    suspend fun fetchChannelFeed(channelId: String): List<FeedEntry> = withContext(Dispatchers.IO) {
+        try {
+            val request = Request.Builder()
+                .url("https://www.youtube.com/feeds/videos.xml?channel_id=$channelId")
+                .header("User-Agent", "Mozilla/5.0")
+                .build()
+            val xml = client.newCall(request).execute().use { r ->
+                if (!r.isSuccessful) return@withContext emptyList()
+                r.body?.string().orEmpty()
+            }
+            val entryPattern = Pattern.compile(
+                "<entry>.*?<yt:videoId>(.+?)</yt:videoId>.*?<title>(.*?)</title>.*?<published>(.+?)</published>",
+                Pattern.DOTALL
+            )
+            val m = entryPattern.matcher(xml)
+            val list = mutableListOf<FeedEntry>()
+            while (m.find()) {
+                list.add(FeedEntry(m.group(1)!!.trim(), decodeXml(m.group(2)!!.trim()), m.group(3)!!.trim()))
+            }
+            list
+        } catch (e: Exception) {
+            Log.w(TAG, "fetchChannelFeed failed", e)
+            emptyList()
+        }
+    }
+
+    private fun decodeXml(s: String): String = s
+        .replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+        .replace("&quot;", "\"").replace("&#39;", "'").replace("&apos;", "'")
 
     /**
      * Resolves metadata and direct audio stream info for a video ID or live stream.
