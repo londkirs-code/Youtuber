@@ -6,6 +6,7 @@ plugins {
   alias(libs.plugins.google.devtools.ksp)
   alias(libs.plugins.secrets)
   alias(libs.plugins.google.services)
+  id("com.chaquo.python")
 }
 
 android {
@@ -16,21 +17,24 @@ android {
     applicationId = "com.aistudio.tunevault.ytmpro"
     minSdk = 24
     targetSdk = 36
-    versionCode = 4
-    versionName = "1.3"
+    versionCode = 5
+    versionName = "1.4"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-    // yt-dlp + python + ffmpeg are native libraries. arm64 only keeps the APK small enough for GitHub
-    // (add "armeabi-v7a" for very old 32-bit phones; the APK grows by ~25 MB per extra ABI).
+    // Python and the native JavaScript runtime are bundled for arm64 Android devices.
     ndk { abiFilters += listOf("arm64-v8a") }
   }
 
-  // Required: python/ffmpeg libraries must be extracted to disk
-  packaging { jniLibs { useLegacyPackaging = true } }
+  // Chaquopy supplies the active Python 3.14 runtime. Exclude the obsolete Python 3.8
+  // binaries from the legacy youtubedl AAR; retain only its QuickJS executable.
+  packaging {
+    jniLibs {
+      useLegacyPackaging = true
+      excludes += setOf("**/libpython.so", "**/libpython.zip.so")
+    }
+  }
 
-  // Do not remove or modify these signingConfigs. They are necessary for building, installing,
-  // and updating Android apps in AI Studio.
   signingConfigs {
     create("release") {
       val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
@@ -52,13 +56,9 @@ android {
       isCrunchPngs = false
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-      // Do not remove or modify this signingConfig assignment. It is necessary for Android apps in
-      // AI Studio.
       signingConfig = signingConfigs.getByName("release")
     }
     debug {
-      // Do not remove or modify this signingConfig assignment. It is necessary for Android apps in
-      // AI Studio.
       signingConfig = signingConfigs.getByName("debugConfig")
     }
   }
@@ -77,8 +77,17 @@ android {
   }
 }
 
-// Configure the Secrets Gradle Plugin to use .env and .env.example files
-// to match the convention used in Web projects.
+chaquopy {
+  defaultConfig {
+    version = "3.14"
+    pip {
+      install("yt-dlp==2026.10.26")
+      install("yt-dlp-ejs==0.8.0")
+      install("pip==26.2.2")
+    }
+  }
+}
+
 secrets {
   propertiesFileName = ".env"
   defaultPropertiesFileName = ".env.example"
@@ -87,8 +96,6 @@ secrets {
 
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
 
-// Some unused dependencies are commented out below instead of being removed.
-// This makes it easy to add them back in the future if needed.
 dependencies {
   implementation(platform(libs.androidx.compose.bom))
   implementation(libs.androidx.activity.compose)
@@ -105,18 +112,12 @@ dependencies {
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
   implementation(libs.coil.compose)
-  // implementation(libs.converter.moshi)
-  // implementation(libs.firebase.ai)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
-  // implementation(libs.logging.interceptor)
-  // implementation(libs.moshi.kotlin)
   implementation(libs.okhttp)
-  // NEW: yt-dlp engine (extraction + download), ffmpeg helper, and background checks for new videos
+  // Kept only for its QuickJS executable; its legacy Python 3.8 runtime is excluded above.
   implementation(libs.youtubedl.library)
-  implementation(libs.youtubedl.ffmpeg)
   implementation(libs.androidx.work.runtime.ktx)
-  // implementation(libs.retrofit)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)
@@ -131,5 +132,4 @@ dependencies {
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
   "ksp"(libs.androidx.room.compiler)
-  // "ksp"(libs.moshi.kotlin.codegen)
 }
