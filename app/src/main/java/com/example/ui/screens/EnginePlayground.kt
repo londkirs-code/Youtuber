@@ -313,7 +313,7 @@ fun EnginePlayground() {
                 ) { Text("שחזור FFmpeg") }
             }
             Text(
-                "עדכון yt-dlp ו־EJS מתקין חבילות חדשות ומחייב הפעלה מחדש. FFmpeg/FFprobe מתעדכנים עם גרסת APK חדשה; הכפתור משחזר את הזוג המובנה במקרה של תקלה.",
+                "עדכון yt-dlp ו־EJS מתקין ומפעיל חבילות חדשות בתהליך הנוכחי. FFmpeg/FFprobe מתעדכנים עם גרסת APK חדשה; הכפתור משחזר את הזוג המובנה במקרה של תקלה.",
                 color = TextSecondary,
                 fontSize = 11.sp
             )
