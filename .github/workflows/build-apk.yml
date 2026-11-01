@@ -49,7 +49,6 @@ jobs:
         run: |
           set -euo pipefail
           sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
-          yes | sdkmanager --licenses
 
       - name: Preserve latest published APK and select next versionCode
         shell: bash
