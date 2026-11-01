@@ -30,28 +30,6 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Validate and prepare permanent release signing key
-        shell: bash
-        env:
-          APK_SIGNING_KEY_BASE64: ${{ secrets.APK_SIGNING_KEY_BASE64 }}
-          APK_SIGNING_STORE_PASSWORD: ${{ secrets.APK_SIGNING_STORE_PASSWORD }}
-          APK_SIGNING_KEY_ALIAS: ${{ secrets.APK_SIGNING_KEY_ALIAS }}
-          APK_SIGNING_KEY_PASSWORD: ${{ secrets.APK_SIGNING_KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-          for secret_name in APK_SIGNING_KEY_BASE64 APK_SIGNING_STORE_PASSWORD APK_SIGNING_KEY_ALIAS APK_SIGNING_KEY_PASSWORD; do
-            if [ -z "${!secret_name:-}" ]; then
-              echo "::error::Missing required GitHub Actions repository secret: ${secret_name}"
-              exit 1
-            fi
-          done
-          KEYSTORE_FILE="$RUNNER_TEMP/tunevault-release.jks"
-          printf '%s' "$APK_SIGNING_KEY_BASE64" | base64 --decode > "$KEYSTORE_FILE"
-          test -s "$KEYSTORE_FILE"
-          keytool -list -keystore "$KEYSTORE_FILE" -storepass "$APK_SIGNING_STORE_PASSWORD" -alias "$APK_SIGNING_KEY_ALIAS" >/dev/null
-          echo "KEYSTORE_PATH=$KEYSTORE_FILE" >> "$GITHUB_ENV"
-          echo "Permanent signing keystore decoded and alias/password verified."
-
       - name: Set up Python 3.14 for Chaquopy
         uses: actions/setup-python@v5
         with:
@@ -127,18 +105,22 @@ jobs:
           python --version
           python -c "import sys; assert sys.version_info[:2] == (3, 14), sys.version"
 
-      - name: Build Release APK
-        env:
-          STORE_PASSWORD: ${{ secrets.APK_SIGNING_STORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.APK_SIGNING_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.APK_SIGNING_KEY_PASSWORD }}
-        run: gradle --no-daemon --stacktrace :app:assembleRelease
+      - name: Verify existing repository debug signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s debug.keystore
+          keytool -list -keystore debug.keystore -storepass android -alias androiddebugkey >/dev/null
+          echo "The existing TuneVault signing key is present and its original alias/password are valid."
+
+      - name: Build Debug APK using the existing TuneVault signing key
+        run: gradle --no-daemon --stacktrace :app:assembleDebug
 
       - name: Verify APK engine payload and calculate SHA-256
         shell: bash
         run: |
           set -euo pipefail
-          APK="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)"
+          APK="$(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' | head -n 1)"
           test -n "$APK"
           test -s "$APK"
           unzip -l "$APK" | grep -q "assets/ffmpeg/ffmpeg"
@@ -169,7 +151,7 @@ jobs:
             OLD_VERSION_CODE="$("$AAPT" dump badging /tmp/TuneVault.previous.apk | sed -nE "s/.*versionCode='([0-9]+)'.*/\1/p")"
             NEW_VERSION_CODE="$("$AAPT" dump badging downloads/TuneVault.apk | sed -nE "s/.*versionCode='([0-9]+)'.*/\1/p")"
             test "$NEW_VERSION_CODE" -gt "$OLD_VERSION_CODE"
-            echo "Release certificate and increasing versionCode are compatible with the previous APK."
+            echo "Existing signing certificate and increasing versionCode are compatible with the previous APK."
           fi
 
       - name: Publish APK to repository
