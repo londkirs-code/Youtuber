@@ -261,6 +261,36 @@ def update_packages(target_dir, callback=None):
     return int(result or 0)
 
 
+
+def activate_packages(package_dir):
+    """Activate newly installed yt-dlp/EJS packages in the running Python process."""
+    global _USER_SITE_DIR
+    package_dir = os.path.abspath(package_dir)
+    if not os.path.isdir(package_dir):
+        raise RuntimeError("Updated Python package directory is missing")
+    for path in (package_dir, _USER_SITE_DIR):
+        if path and path in sys.path:
+            while path in sys.path:
+                sys.path.remove(path)
+    sys.path.insert(0, package_dir)
+    _USER_SITE_DIR = package_dir
+
+    # Discard already-imported modules so subsequent calls load the new package.
+    for name in list(sys.modules):
+        if (name == "yt_dlp" or name.startswith("yt_dlp.") or
+                name == "yt_dlp_ejs" or name.startswith("yt_dlp_ejs.")):
+            del sys.modules[name]
+    importlib.invalidate_caches()
+
+    ytdlp = importlib.import_module("yt_dlp")
+    ejs_version = importlib.metadata.version("yt-dlp-ejs")
+    return json.dumps({
+        "yt_dlp": getattr(ytdlp, "__version__", "unknown"),
+        "ejs": ejs_version,
+        "extractors": len(ytdlp.list_extractors()),
+    })
+
+
 def clear_cache():
     if _CACHE_DIR and os.path.isdir(_CACHE_DIR):
         shutil.rmtree(_CACHE_DIR, ignore_errors=True)
