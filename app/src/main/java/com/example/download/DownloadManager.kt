@@ -188,7 +188,7 @@ class DownloadManager(private val context: Context) {
 
             var rawFile: File? = null
             // Let yt-dlp choose its current default clients first; android_vr is no longer reliable.
-            val playerClients = listOf("default", "tv", "web_embedded")
+            val playerClients = listOf("default", "tv_samsung", "visionos", "tv", "web_embedded")
             val attemptErrors = mutableListOf<String>()
 
             suspend fun tryPlayerClients(stage: String) {
@@ -230,7 +230,7 @@ class DownloadManager(private val context: Context) {
                 log("[yt-dlp] כל לקוחות YouTube החלופיים נכשלו. בודק ומעדכן את yt-dlp...")
                 rawLog("[INFO] All fallback player clients failed; updating yt-dlp nightly once.")
                 updateState(DownloadStatus.CONNECTING, hebrewStatus = "מעדכן את מנוע ההורדה ומנסה שיטות נוספות...")
-                val updateSucceeded = app.updateYtdlp()
+                val updateSucceeded = app.updateYtdlp { message -> rawLog("[update] $message") }
                 rawLog("[update] yt-dlp update " + if (updateSucceeded) "succeeded" else "failed or unavailable")
 
                 if (updateSucceeded) {
