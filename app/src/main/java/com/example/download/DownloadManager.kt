@@ -225,7 +225,7 @@ class DownloadManager(private val context: Context) {
             // require PO Tokens for GVS according to yt-dlp's current client matrix.
             tryPlayerClients("initial")
 
-            if (rawFile == null || !rawFile!!.exists() || rawFile!!.length() == 0L) {
+            if (rawFile?.let { it.exists() && it.length() > 0L } != true) {
                 log("[yt-dlp] כל לקוחות YouTube החלופיים נכשלו. בודק ומעדכן את yt-dlp...")
                 rawLog("[INFO] All fallback player clients failed; updating yt-dlp nightly once.")
                 updateState(DownloadStatus.CONNECTING, hebrewStatus = "מעדכן את מנוע ההורדה ומנסה שיטות נוספות...")
@@ -237,15 +237,18 @@ class DownloadManager(private val context: Context) {
                 }
             }
 
-            if (rawFile == null || !rawFile!!.exists() || rawFile!!.length() == 0L) {
+            if (rawFile?.let { it.exists() && it.length() > 0L } != true) {
                 val details = attemptErrors.takeLast(6).joinToString(" | ")
                 throw YoutubeDLException(
                     "All YouTube player clients failed. " + details
                 )
             }
 
-            val ext = rawFile.extension.ifEmpty { "m4a" }
-            var finalFile: File = rawFile
+            val downloadedRawFile = rawFile?.takeIf { it.exists() && it.length() > 0L }
+                ?: throw YoutubeDLException("No non-empty audio file was produced by any YouTube player client.")
+
+            val ext = downloadedRawFile.extension.ifEmpty { "m4a" }
+            var finalFile: File = downloadedRawFile
             val isTrimmed = trimRange != null && trimRange.endMs > trimRange.startMs && ext in TRIMMABLE_EXT
 
             if (trimRange != null && trimRange.endMs > trimRange.startMs && !isTrimmed) {
@@ -258,14 +261,14 @@ class DownloadManager(private val context: Context) {
                 val trimmedFile = File(musicDir, "${sanitizedTitle}_${System.currentTimeMillis()}.$ext")
 
                 val success = AudioTrimmer.trimM4A(
-                    sourceFile = rawFile,
+                    sourceFile = downloadedRawFile,
                     destinationFile = trimmedFile,
                     startMs = trimRange.startMs,
                     endMs = trimRange.endMs
                 )
 
                 if (success && trimmedFile.exists() && trimmedFile.length() > 0L) {
-                    rawFile.delete()
+                    downloadedRawFile.delete()
                     finalFile = trimmedFile
                     log("[חיתוך] המקטע נחתך ונשמר בהצלחה ללא איבוד איכות!")
                 } else {
@@ -273,9 +276,9 @@ class DownloadManager(private val context: Context) {
                 }
             }
 
-            if (finalFile == rawFile) {
+            if (finalFile == downloadedRawFile) {
                 val cleanFile = File(musicDir, "${sanitizedTitle}_${System.currentTimeMillis()}.$ext")
-                if (rawFile.renameTo(cleanFile)) finalFile = cleanFile
+                if (downloadedRawFile.renameTo(cleanFile)) finalFile = cleanFile
             }
 
             updateState(DownloadStatus.FINISHING, progress = 100, hebrewStatus = "שומר בספרייה...")
