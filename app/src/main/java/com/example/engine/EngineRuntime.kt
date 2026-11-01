@@ -16,6 +16,8 @@ import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.zip.ZipInputStream
 
 interface YtDlpBridgeCallback {
@@ -57,6 +59,7 @@ object EngineRuntime {
     @Volatile private var ffmpegDirectory: File? = null
     @Volatile private var quickJsExecutable: File? = null
     @Volatile private var initialized = false
+    private val activeCancellations = ConcurrentHashMap<String, AtomicBoolean>()
 
     suspend fun initialize(context: Context) = withContext(Dispatchers.IO) {
         val app = context.applicationContext
@@ -108,20 +111,38 @@ object EngineRuntime {
         getVersionsInternal()
     }
 
-    suspend fun runYtDlp(context: Context, args: List<String>, callback: YtDlpBridgeCallback): Int =
-        withContext(Dispatchers.IO) {
-            ensureInitialized(context)
-            try {
-                Python.getInstance().getModule("tunevault_engine")
-                    .callAttr("run_cli", args.toTypedArray(), callback)
-                    .toJava(Int::class.javaObjectType)
-            } catch (error: PyException) {
-                if (callback.isCancelled() || error.message.orEmpty().contains("TUNEVault_CANCELLED")) {
-                    throw EngineCancelledException()
-                }
-                throw EngineExecutionException(error.message ?: "yt-dlp execution failed", error)
-            }
+    suspend fun runYtDlp(
+        context: Context,
+        taskId: String,
+        args: List<String>,
+        callback: YtDlpBridgeCallback
+    ): Int = withContext(Dispatchers.IO) {
+        ensureInitialized(context)
+        val cancellation = AtomicBoolean(false)
+        activeCancellations[taskId] = cancellation
+        val bridge = object : YtDlpBridgeCallback {
+            override fun onLog(level: String, message: String) = callback.onLog(level, message)
+            override fun onProgress(percent: Double, downloadedBytes: Long, totalBytes: Long, speed: String, etaSeconds: Long) =
+                callback.onProgress(percent, downloadedBytes, totalBytes, speed, etaSeconds)
+            override fun isCancelled(): Boolean = cancellation.get() || callback.isCancelled()
         }
+        try {
+            Python.getInstance().getModule("tunevault_engine")
+                .callAttr("run_cli", args.toTypedArray(), bridge)
+                .toJava(Int::class.javaObjectType)
+        } catch (error: PyException) {
+            if (bridge.isCancelled() || error.message.orEmpty().contains("TUNEVault_CANCELLED")) {
+                throw EngineCancelledException()
+            }
+            throw EngineExecutionException(error.message ?: "yt-dlp execution failed", error)
+        } finally {
+            activeCancellations.remove(taskId)
+        }
+    }
+
+    fun cancel(taskId: String) {
+        activeCancellations[taskId]?.set(true)
+    }
 
     suspend fun runCommand(context: Context, command: String, callback: YtDlpBridgeCallback): Int =
         withContext(Dispatchers.IO) {
