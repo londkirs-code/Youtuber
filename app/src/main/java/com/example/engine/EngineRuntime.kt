@@ -270,6 +270,58 @@ object EngineRuntime {
             }
         }
 
+    suspend fun updateFfmpeg(context: Context, callback: YtDlpBridgeCallback): String =
+        withContext(Dispatchers.IO) {
+            ensureInitialized(context)
+            val nativeDir = File(context.applicationContext.applicationInfo.nativeLibraryDir)
+            val ffmpeg = File(nativeDir, "libffmpeg.so")
+            val ffprobe = File(nativeDir, "libffprobe.so")
+            try {
+                Log.i(TAG, "FFmpeg version: " + readVersion(ffmpeg))
+            } catch (error: Exception) {
+                Log.w(TAG, "FFmpeg version check unavailable.", error)
+            }
+            try {
+                Log.i(TAG, "FFprobe version: " + readVersion(ffprobe))
+            } catch (error: Exception) {
+                Log.w(TAG, "FFprobe version check unavailable.", error)
+            }
+            callback.onLog("INFO", "Using FFmpeg/FFprobe bundled in APK native libraries.")
+            "FFmpeg ו־FFprobe המובנים באפליקציה מוכנים לשימוש."
+        }
+
+    suspend fun clearCache(context: Context) = withContext(Dispatchers.IO) {
+        ensureInitialized(context)
+        Python.getInstance().getModule("tunevault_engine").callAttr("clear_cache")
+    }
+
+    private fun ensureInitialized(context: Context) {
+        if (!initialized) throw IllegalStateException("Embedded yt-dlp engine is not initialized")
+    }
+
+    private fun getVersionsInternal(): EngineVersions {
+        val app = appContext ?: throw IllegalStateException("Engine context is unavailable")
+        val nativeDir = File(app.applicationInfo.nativeLibraryDir)
+        val ffmpeg = File(nativeDir, "libffmpeg.so")
+        val ffprobe = File(nativeDir, "libffprobe.so")
+        val quickJs = quickJsExecutable ?: File(nativeDir, "libqjs.so")
+        val info = JSONObject(
+            Python.getInstance().getModule("tunevault_engine")
+                .callAttr("versions").toJava(String::class.java)
+        )
+        return EngineVersions(
+            python = info.optString("python", "unknown"),
+            ytDlp = info.optString("yt_dlp", "unknown"),
+            ejs = info.optString("ejs", "not installed"),
+            ffmpeg = safeVersion(ffmpeg),
+            ffprobe = safeVersion(ffprobe),
+            quickJs = safeQuickJsVersion(quickJs),
+            architecture = info.optString("architecture", "unknown"),
+            curlCffi = info.optBoolean("curl_cffi", false),
+            extractorCount = info.optInt("extractors", 0)
+        )
+    }
+
     private fun safeVersion(file: File): String = try {
         readVersion(file)
     } catch (error: Exception) {
