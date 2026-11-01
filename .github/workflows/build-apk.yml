@@ -76,3 +76,5 @@ jobs:
             git commit -m "Publish latest TuneVault APK"
             git push origin "HEAD:${GITHUB_REF_NAME}"
           fi
+
+# Rebuild requested after the latest source update.
