@@ -277,7 +277,8 @@ fun MainAppScreen(viewModel: MainViewModel) {
                     onToggleSaveVideo = { viewModel.toggleSaveVideo(it) },
                     onToggleSaveChannel = { viewModel.toggleSaveChannel(it) },
                     onDownload = { viewModel.startDownload(it, applyTrim = false) },
-                    onTrim = { viewModel.openTrimmerDialog(it) }
+                    onTrim = { viewModel.openTrimmerDialog(it) },
+                    onDismissSuggestions = { viewModel.dismissSuggestions() }
                 )
                 1 -> DownloadsScreen(
                     tasks = downloadTasks,

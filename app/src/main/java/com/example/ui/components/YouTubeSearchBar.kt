@@ -37,6 +37,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -60,8 +61,11 @@ fun YouTubeSearchBar(
     history: List<SearchHistoryEntity>,
     onDeleteHistoryItem: (String) -> Unit,
     onClearAllHistory: () -> Unit,
+    onDismissSuggestions: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val keyboardController = LocalSoftwareKeyboardController.current
+
     Column(modifier = modifier.fillMaxWidth()) {
         OutlinedTextField(
             value = query,
@@ -84,7 +88,10 @@ fun YouTubeSearchBar(
             trailingIcon = {
                 if (query.isNotEmpty()) {
                     IconButton(
-                        onClick = onClear,
+                        onClick = {
+                            onDismissSuggestions()
+                            onClear()
+                        },
                         modifier = Modifier.testTag("clear_search_btn")
                     ) {
                         Icon(
@@ -107,13 +114,17 @@ fun YouTubeSearchBar(
                 unfocusedTextColor = TextPrimary
             ),
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = { onSearch(query) }),
+            keyboardActions = KeyboardActions(onSearch = {
+                keyboardController?.hide()
+                onDismissSuggestions()
+                onSearch(query)
+            }),
             modifier = Modifier
                 .fillMaxWidth()
                 .testTag("youtube_search_input")
         )
 
-        // Real-time suggestions dropdown
+        // Real-time suggestions dropdown with dismiss header
         AnimatedVisibility(visible = suggestions.isNotEmpty()) {
             Card(
                 colors = CardDefaults.cardColors(containerColor = SurfaceCard),
@@ -123,12 +134,43 @@ fun YouTubeSearchBar(
                     .padding(top = 6.dp)
             ) {
                 Column(modifier = Modifier.padding(vertical = 6.dp)) {
+                    // Header with dismiss button
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = "הצעות לחיפוש",
+                            color = TextTertiary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        IconButton(
+                            onClick = onDismissSuggestions,
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "הסתר הצעות",
+                                tint = TextSecondary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+
                     suggestions.take(6).forEach { suggestion ->
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { onSearch(suggestion) }
+                                .clickable {
+                                    keyboardController?.hide()
+                                    onDismissSuggestions()
+                                    onSearch(suggestion)
+                                }
                                 .padding(horizontal = 16.dp, vertical = 10.dp)
                                 .testTag("suggestion_item")
                         ) {
@@ -192,7 +234,11 @@ fun YouTubeSearchBar(
             ) {
                 history.take(8).forEach { item ->
                     SuggestionChip(
-                        onClick = { onSearch(item.query) },
+                        onClick = {
+                            keyboardController?.hide()
+                            onDismissSuggestions()
+                            onSearch(item.query)
+                        },
                         label = {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(item.query, fontSize = 12.sp, color = TextPrimary)

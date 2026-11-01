@@ -185,10 +185,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun executeSearch(query: String) {
+        suggestionDebounceJob?.cancel()
+        _searchSuggestions.value = emptyList()
         val q = query.trim()
         if (q.isBlank()) return
         _searchQuery.value = q
-        _searchSuggestions.value = emptyList()
         _isSearching.value = true
 
         // Persist to Room search history (links are not worth keeping)
@@ -205,6 +206,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _searchResults.value = results
             _isSearching.value = false
         }
+    }
+
+    fun dismissSuggestions() {
+        suggestionDebounceJob?.cancel()
+        _searchSuggestions.value = emptyList()
     }
 
     fun deleteSearchHistoryItem(query: String) {

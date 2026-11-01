@@ -37,6 +37,7 @@ data class DownloadTask(
     val totalSizeText: String = "-- MB",
     val hebrewStatusText: String = "ממתין בתור להורדה...",
     val logs: List<String> = emptyList(),
+    val rawLogs: List<String> = emptyList(),
     val status: DownloadStatus = DownloadStatus.QUEUED,
     val filePath: String? = null,
     val errorMessage: String? = null,

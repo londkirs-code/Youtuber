@@ -63,13 +63,17 @@ class ChannelCheckWorker(ctx: Context, params: WorkerParameters) : CoroutineWork
         private const val UNIQUE_NAME = "channel_check"
 
         fun schedule(ctx: Context) {
-            val request = PeriodicWorkRequestBuilder<ChannelCheckWorker>(15, TimeUnit.MINUTES)
-                .setConstraints(
-                    Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
-                )
-                .build()
-            WorkManager.getInstance(ctx)
-                .enqueueUniquePeriodicWork(UNIQUE_NAME, ExistingPeriodicWorkPolicy.KEEP, request)
+            try {
+                val request = PeriodicWorkRequestBuilder<ChannelCheckWorker>(15, TimeUnit.MINUTES)
+                    .setConstraints(
+                        Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
+                    )
+                    .build()
+                WorkManager.getInstance(ctx)
+                    .enqueueUniquePeriodicWork(UNIQUE_NAME, ExistingPeriodicWorkPolicy.KEEP, request)
+            } catch (e: Exception) {
+                Log.w("ChannelCheckWorker", "WorkManager schedule skipped: ${e.message}")
+            }
         }
     }
 }

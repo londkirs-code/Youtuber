@@ -107,6 +107,19 @@ class DownloadManager(private val context: Context) {
             }
         }
 
+        fun rawLog(line: String) {
+            if (line.isBlank()) return
+            _tasks.update { list ->
+                list.map {
+                    if (it.id == taskId) {
+                        val current = it.rawLogs
+                        val next = if (current.size >= 1000) current.drop(current.size - 999) + line else current + line
+                        it.copy(rawLogs = next)
+                    } else it
+                }
+            }
+        }
+
         fun updateState(
             status: DownloadStatus,
             progress: Int = -1,
@@ -175,14 +188,16 @@ class DownloadManager(private val context: Context) {
 
             var rawFile: File? = null
             try {
-                rawFile = runYtDlp(taskId, videoId, isLive, rawBase, ::log, ::updateState)
+                rawFile = runYtDlp(taskId, videoId, isLive, rawBase, ::log, ::rawLog, ::updateState)
             } catch (e: YoutubeDLException) {
                 // Most common cause of failures: yt-dlp is outdated. Update once and retry.
                 log("[yt-dlp] הורדה נכשלה: ${shortError(e)}")
+                rawLog("[ERROR] " + (e.message ?: "yt-dlp failed"))
                 log("[yt-dlp] מעדכן את yt-dlp ומנסה שוב...")
+                rawLog("[INFO] Updating yt-dlp nightly and retrying...")
                 updateState(DownloadStatus.CONNECTING, hebrewStatus = "מעדכן את yt-dlp ומנסה שוב...")
                 app.updateYtdlp()
-                rawFile = runYtDlp(taskId, videoId, isLive, rawBase, ::log, ::updateState)
+                rawFile = runYtDlp(taskId, videoId, isLive, rawBase, ::log, ::rawLog, ::updateState)
             }
 
             if (rawFile == null || !rawFile.exists() || rawFile.length() == 0L) {
@@ -244,6 +259,7 @@ class DownloadManager(private val context: Context) {
             database.trackDao().insertTrack(track)
 
             log("[הצלחה] הקובץ מוכן ונשמר בספריית המוזיקה!")
+            rawLog("[success] File successfully saved: ${finalFile.name} (${finalFile.length()} bytes)")
             _tasks.update { list ->
                 list.map {
                     if (it.id == taskId) {
@@ -260,14 +276,17 @@ class DownloadManager(private val context: Context) {
 
         } catch (e: YoutubeDL.CanceledException) {
             log("[ביטול] ההורדה בוטלה.")
+            rawLog("[process] Canceled by user.")
         } catch (e: YoutubeDLException) {
             Log.e(TAG, "yt-dlp error", e)
             val reason = friendlyError(e)
             log("[שגיאה] ${shortError(e)}")
+            rawLog("[ERROR] ${e.message ?: "yt-dlp execution error"}")
             updateState(DownloadStatus.FAILED, hebrewStatus = reason)
         } catch (e: Exception) {
             Log.e(TAG, "Download error", e)
             log("[שגיאה קריטית] ${e.localizedMessage ?: "שגיאה בלתי צפויה"}")
+            rawLog("[FATAL] ${e.localizedMessage ?: e.javaClass.simpleName}")
             updateState(DownloadStatus.FAILED, hebrewStatus = "שגיאה במהלך ההורדה")
         } finally {
             activeJobs.remove(taskId)
@@ -286,6 +305,7 @@ class DownloadManager(private val context: Context) {
         isLive: Boolean,
         rawBase: File,
         log: (String) -> Unit,
+        rawLog: (String) -> Unit,
         updateState: (DownloadStatus, Int, String?, String?, String?, String?, Long?) -> Unit
     ): File? {
         val request = YoutubeDLRequest("https://www.youtube.com/watch?v=$videoId").apply {
@@ -302,6 +322,15 @@ class DownloadManager(private val context: Context) {
                 addOption("--hls-use-mpegts")
             }
         }
+
+        val cmdLine = buildString {
+            append("yt-dlp -f \"bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio/best\" ")
+            append("-o \"${rawBase.name}.%(ext)s\" ")
+            append("--no-playlist --no-mtime --newline --retries 5 --socket-timeout 20 ")
+            if (isLive) append("--no-part --hls-use-mpegts ")
+            append("https://www.youtube.com/watch?v=$videoId")
+        }
+        rawLog("[cmd] $cmdLine")
 
         var ticker: Job? = null
         if (isLive) {
@@ -323,7 +352,10 @@ class DownloadManager(private val context: Context) {
         }
 
         try {
-            YoutubeDL.getInstance().execute(request, taskId) { progress, _, line ->
+            val response = YoutubeDL.getInstance().execute(request, taskId) { progress, _, line ->
+                if (!line.isNullOrBlank()) {
+                    rawLog(line)
+                }
                 if (!isLive && progress >= 0f) {
                     val percent = progress.toInt().coerceIn(0, 99)
                     val m = PROGRESS_LINE.find(line)
@@ -337,10 +369,18 @@ class DownloadManager(private val context: Context) {
                     )
                 }
             }
+            if (!response.err.isNullOrBlank()) {
+                rawLog("[stderr] " + response.err)
+            }
+            rawLog("[process] yt-dlp exit code: ${response.exitCode} (elapsed: ${response.elapsedTime}ms)")
         } catch (e: YoutubeDL.CanceledException) {
+            rawLog("[process] Execution canceled by user.")
             // For live streams "stop" is a normal ending: keep what was recorded
             if (!(isLive && liveStopRequested.contains(taskId))) throw e
             log("[שידור חי] ההקלטה הופסקה ונשמרה.")
+        } catch (e: YoutubeDLException) {
+            rawLog("[error] " + (e.message ?: "YoutubeDLException"))
+            throw e
         } finally {
             ticker?.cancel()
         }

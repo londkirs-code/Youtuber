@@ -2,6 +2,7 @@ package com.example.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,18 +11,24 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cancel
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -29,9 +36,11 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -40,7 +49,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -68,6 +79,9 @@ fun DownloadItemCard(
     modifier: Modifier = Modifier
 ) {
     var isLogsExpanded by remember { mutableStateOf(false) }
+    var selectedLogTab by remember { mutableIntStateOf(0) }
+    var copiedFeedback by remember { mutableStateOf(false) }
+    val clipboardManager = LocalClipboardManager.current
 
     Card(
         shape = RoundedCornerShape(16.dp),
@@ -205,44 +219,186 @@ fun DownloadItemCard(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
                     .clickable { isLogsExpanded = !isLogsExpanded }
-                    .padding(vertical = 4.dp)
+                    .padding(vertical = 6.dp, horizontal = 4.dp)
             ) {
+                Icon(
+                    imageVector = Icons.Default.Terminal,
+                    contentDescription = null,
+                    tint = if (isLogsExpanded) NeonCyan else TextTertiary,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "פרטי תהליך yt-dlp בעברית",
-                    color = TextTertiary,
-                    fontSize = 11.sp,
+                    text = if (task.rawLogs.isNotEmpty())
+                        "פלט מקורי של yt-dlp (${task.rawLogs.size} שורות)"
+                    else
+                        "פרטי תהליך ופלט yt-dlp",
+                    color = if (isLogsExpanded) NeonCyan else TextSecondary,
+                    fontSize = 12.sp,
+                    fontWeight = if (isLogsExpanded) FontWeight.SemiBold else FontWeight.Normal,
                     modifier = Modifier.weight(1f)
                 )
                 Icon(
                     imageVector = if (isLogsExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
                     contentDescription = null,
                     tint = TextTertiary,
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier.size(18.dp)
                 )
             }
 
             // Terminal Logs Box
             AnimatedVisibility(visible = isLogsExpanded) {
-                Box(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(SurfaceDark)
-                        .padding(10.dp)
+                        .padding(top = 6.dp)
                 ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        if (task.logs.isEmpty()) {
-                            Text("אין נתוני יומן עדיין...", color = TextTertiary, fontSize = 11.sp)
-                        } else {
-                            task.logs.forEach { logLine ->
+                    // Header controls: Tabs + Copy button
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 6.dp)
+                    ) {
+                        // Segmented tabs
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            // Tab 0: Raw yt-dlp
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (selectedLogTab == 0) ScarletRed.copy(alpha = 0.2f) else SurfaceDark,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { selectedLogTab = 0 }
+                            ) {
                                 Text(
-                                    text = logLine,
-                                    color = if (logLine.contains("שגיאה")) LiveBadgeColor else if (logLine.contains("הצלחה")) SuccessGreen else TextSecondary,
+                                    text = "פלט מקורי (${task.rawLogs.size})",
+                                    color = if (selectedLogTab == 0) ScarletRed else TextSecondary,
                                     fontSize = 11.sp,
-                                    fontFamily = FontFamily.Monospace,
-                                    lineHeight = 16.sp
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                 )
+                            }
+
+                            // Tab 1: Hebrew translated logs
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (selectedLogTab == 1) NeonCyan.copy(alpha = 0.2f) else SurfaceDark,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { selectedLogTab = 1 }
+                            ) {
+                                Text(
+                                    text = "יומן בעברית (${task.logs.size})",
+                                    color = if (selectedLogTab == 1) NeonCyan else TextSecondary,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+
+                        // Copy button
+                        val linesToCopy = if (selectedLogTab == 0) task.rawLogs else task.logs
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable(enabled = linesToCopy.isNotEmpty()) {
+                                    clipboardManager.setText(AnnotatedString(linesToCopy.joinToString("\n")))
+                                    copiedFeedback = true
+                                }
+                                .padding(horizontal = 6.dp, vertical = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (copiedFeedback) Icons.Default.Check else Icons.Default.ContentCopy,
+                                contentDescription = "העתק פלט",
+                                tint = if (copiedFeedback) SuccessGreen else TextTertiary,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = if (copiedFeedback) "הועתק!" else "העתק",
+                                color = if (copiedFeedback) SuccessGreen else TextTertiary,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+
+                    // Console output view
+                    val scrollState = rememberScrollState()
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 90.dp, max = 240.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF090D12))
+                            .border(1.dp, BorderDark, RoundedCornerShape(8.dp))
+                            .padding(10.dp)
+                            .verticalScroll(scrollState)
+                    ) {
+                        if (selectedLogTab == 0) {
+                            // Raw yt-dlp Output
+                            if (task.rawLogs.isEmpty()) {
+                                Text(
+                                    text = "ממתין לפלט תהליך ממנוע yt-dlp...",
+                                    color = TextTertiary,
+                                    fontSize = 11.sp,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            } else {
+                                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    task.rawLogs.forEach { rawLine ->
+                                        val lineColor = when {
+                                            rawLine.startsWith("[cmd]") -> Color(0xFFFFD54F) // Gold/Yellow
+                                            rawLine.startsWith("[youtube]") || rawLine.startsWith("[info]") -> Color(0xFF00E5FF) // Cyan
+                                            rawLine.startsWith("[download]") -> Color(0xFF00E676) // Green
+                                            rawLine.startsWith("[Fixup") || rawLine.startsWith("[ExtractAudio]") -> Color(0xFFEA80FC) // Magenta
+                                            rawLine.contains("ERROR", ignoreCase = true) ||
+                                                rawLine.startsWith("[stderr]") ||
+                                                rawLine.startsWith("[error]") ||
+                                                rawLine.startsWith("[FATAL]") -> Color(0xFFFF5252) // Red
+                                            rawLine.contains("WARNING", ignoreCase = true) -> Color(0xFFFFA726) // Orange
+                                            rawLine.startsWith("[process]") || rawLine.startsWith("[success]") -> Color(0xFF1DE9B6) // Teal
+                                            else -> Color(0xFFCFD8DC) // Soft white/silver
+                                        }
+                                        Text(
+                                            text = rawLine,
+                                            color = lineColor,
+                                            fontSize = 10.5.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            lineHeight = 15.sp
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            // Hebrew logs
+                            if (task.logs.isEmpty()) {
+                                Text(
+                                    text = "אין נתוני יומן בעברית עדיין...",
+                                    color = TextTertiary,
+                                    fontSize = 11.sp
+                                )
+                            } else {
+                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    task.logs.forEach { logLine ->
+                                        Text(
+                                            text = logLine,
+                                            color = when {
+                                                logLine.contains("שגיאה") -> LiveBadgeColor
+                                                logLine.contains("הצלחה") -> SuccessGreen
+                                                logLine.contains("חיתוך") -> NeonCyan
+                                                else -> TextSecondary
+                                            },
+                                            fontSize = 11.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            lineHeight = 16.sp
+                                        )
+                                    }
+                                }
                             }
                         }
                     }

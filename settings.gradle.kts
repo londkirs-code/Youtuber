@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "TuneVault"
+rootProject.name = "YouTube"
 
 include(":app")

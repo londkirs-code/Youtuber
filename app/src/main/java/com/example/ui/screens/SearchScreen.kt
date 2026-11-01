@@ -82,6 +82,7 @@ fun SearchScreen(
     onToggleSaveChannel: (String) -> Unit,
     onDownload: (SearchResultItem) -> Unit,
     onTrim: (SearchResultItem) -> Unit,
+    onDismissSuggestions: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val clipboardManager = LocalClipboardManager.current
@@ -100,7 +101,8 @@ fun SearchScreen(
                 suggestions = suggestions,
                 history = history,
                 onDeleteHistoryItem = onDeleteHistoryItem,
-                onClearAllHistory = onClearAllHistory
+                onClearAllHistory = onClearAllHistory,
+                onDismissSuggestions = onDismissSuggestions
             )
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -183,7 +185,7 @@ fun SearchScreen(
                                     items(savedChannels, key = { it.channelTitle }) { ch ->
                                         SuggestionChip(
                                             onClick = {
-                                                onQueryChanged(ch.channelTitle)
+                                                onDismissSuggestions()
                                                 onSearch(ch.channelTitle)
                                             },
                                             label = { Text(ch.channelTitle, fontSize = 12.sp, color = TextPrimary) },
