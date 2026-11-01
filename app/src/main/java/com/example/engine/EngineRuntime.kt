@@ -213,14 +213,34 @@ object EngineRuntime {
                         if (backup.exists()) backup.renameTo(target)
                         throw IllegalStateException("Could not atomically install updated yt-dlp packages")
                     }
+                    val activeInfo = JSONObject(
+                        Python.getInstance().getModule("tunevault_engine")
+                            .callAttr("activate_packages", target.absolutePath)
+                            .toJava(String::class.java)
+                    )
+                    val activeVersion = activeInfo.optString("yt_dlp", "")
+                    val activeEjs = activeInfo.optString("ejs", "")
+                    if (activeVersion != newVersion || activeEjs.isBlank() || activeEjs == "not installed") {
+                        throw IllegalStateException("New yt-dlp/EJS packages failed activation in the running Python process")
+                    }
                     backup.deleteRecursively()
                     app.getSharedPreferences("yt-dlp-engine", Context.MODE_PRIVATE).edit()
                         .putString("python_package_version", newVersion).apply()
-                    callback.onLog("SUCCESS", "yt-dlp ${newVersion} and yt-dlp-ejs installed. Restart TuneVault to load them.")
-                    "yt-dlp ${newVersion} הותקן. יש להפעיל מחדש את TuneVault כדי לטעון את הגרסה החדשה."
+                    callback.onLog("SUCCESS", "yt-dlp " + newVersion + " and yt-dlp-ejs installed and activated.")
+                    "yt-dlp " + newVersion + " ו־yt-dlp-ejs הותקנו ונטענו בהצלחה ללא הפעלה מחדש."
                 } catch (error: Exception) {
                     temp.deleteRecursively()
-                    if (backup.exists() && !target.exists()) backup.renameTo(target)
+                    if (backup.exists()) {
+                        target.deleteRecursively()
+                        if (backup.renameTo(target)) {
+                            try {
+                                Python.getInstance().getModule("tunevault_engine")
+                                    .callAttr("activate_packages", target.absolutePath)
+                            } catch (_: Exception) {
+                                Log.e(TAG, "Could not reactivate the previous yt-dlp package set", error)
+                            }
+                        }
+                    }
                     callback.onLog("ERROR", error.message ?: error.javaClass.simpleName)
                     throw error
                 }
