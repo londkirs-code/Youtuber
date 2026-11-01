@@ -236,6 +236,8 @@ class DownloadManager(private val context: Context) {
                         attemptErrors += reason
                         rawLog("[fallback] $reason")
                         rawFile = null
+                    } catch (e: EngineCancelledException) {
+                        throw e
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
