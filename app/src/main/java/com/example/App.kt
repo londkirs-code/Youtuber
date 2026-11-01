@@ -51,16 +51,29 @@ class App : Application() {
     /** Download code calls this before the first yt-dlp command. */
     suspend fun awaitYtdlp(): Boolean = ytdlpReady.await()
 
-    /** Updates the yt-dlp binary. Safe to call from several places. */
-    suspend fun updateYtdlp() {
-        updateMutex.withLock {
+    /** Updates the yt-dlp binary and reports whether the update check/install succeeded. */
+    suspend fun updateYtdlp(): Boolean {
+        return updateMutex.withLock {
+            val previousVersion = YoutubeDL.version(this)
             try {
-                val status = YoutubeDL.getInstance().updateYoutubeDL(this, YoutubeDL.UpdateChannel.NIGHTLY)
-                Log.i(TAG, "yt-dlp update status: $status")
-                getSharedPreferences("ytdlp", MODE_PRIVATE)
-                    .edit().putLong("last_update", System.currentTimeMillis()).apply()
+                val status = YoutubeDL.getInstance().updateYoutubeDL(
+                    this, YoutubeDL.UpdateChannel.NIGHTLY
+                )
+                val currentVersion = YoutubeDL.version(this)
+                val succeeded = status == YoutubeDL.UpdateStatus.DONE ||
+                    status == YoutubeDL.UpdateStatus.ALREADY_UP_TO_DATE
+                Log.i(
+                    TAG,
+                    "yt-dlp update status=$status, version=$previousVersion -> $currentVersion"
+                )
+                if (succeeded) {
+                    getSharedPreferences("ytdlp", MODE_PRIVATE)
+                        .edit().putLong("last_update", System.currentTimeMillis()).apply()
+                }
+                succeeded
             } catch (e: Exception) {
-                Log.w(TAG, "yt-dlp update failed", e)
+                Log.w(TAG, "yt-dlp update failed (previous version: $previousVersion)", e)
+                false
             }
         }
     }

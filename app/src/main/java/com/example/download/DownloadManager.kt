@@ -187,22 +187,61 @@ class DownloadManager(private val context: Context) {
             updateState(DownloadStatus.CONNECTING, hebrewStatus = "מתחבר ליוטיוב ומחלץ שמע...")
 
             var rawFile: File? = null
-            try {
-                rawFile = runYtDlp(taskId, videoId, isLive, rawBase, ::log, ::rawLog, ::updateState)
-            } catch (e: YoutubeDLException) {
-                // Most common cause of failures: yt-dlp is outdated. Update once and retry.
-                log("[yt-dlp] הורדה נכשלה: ${shortError(e)}")
-                rawLog("[ERROR] " + (e.message ?: "yt-dlp failed"))
-                log("[yt-dlp] מעדכן את yt-dlp ומנסה שוב...")
-                rawLog("[INFO] Updating yt-dlp nightly and retrying...")
-                updateState(DownloadStatus.CONNECTING, hebrewStatus = "מעדכן את yt-dlp ומנסה שוב...")
-                app.updateYtdlp()
-                rawFile = runYtDlp(taskId, videoId, isLive, rawBase, ::log, ::rawLog, ::updateState)
+            val playerClients = listOf("android_vr", "web_embedded", "tv")
+            val attemptErrors = mutableListOf<String>()
+
+            suspend fun tryPlayerClients(stage: String) {
+                for (playerClient in playerClients) {
+                    if (rawFile != null && rawFile!!.exists() && rawFile!!.length() > 0L) return
+
+                    try {
+                        log("[yt-dlp] מנסה לקוח YouTube: $playerClient ($stage)")
+                        rawFile = runYtDlp(
+                            taskId, videoId, isLive, rawBase,
+                            playerClient, ::log, ::rawLog, ::updateState
+                        )
+                        if (rawFile != null && rawFile!!.exists() && rawFile!!.length() > 0L) {
+                            log("[yt-dlp] הלקוח $playerClient הצליח להפיק קובץ שמע.")
+                            rawLog("[fallback] success with player_client=$playerClient")
+                            return
+                        }
+
+                        val reason = "$playerClient: no non-empty output file"
+                        attemptErrors += reason
+                        rawLog("[fallback] $reason")
+                        rawFile = null
+                    } catch (e: YoutubeDLException) {
+                        val reason = "$playerClient: ${shortError(e)}"
+                        attemptErrors += reason
+                        log("[yt-dlp] הלקוח $playerClient נכשל: ${shortError(e)}")
+                        rawLog("[fallback] $reason")
+                        rawFile = null
+                    }
+                }
             }
 
-            if (rawFile == null || !rawFile.exists() || rawFile.length() == 0L) {
-                updateState(DownloadStatus.FAILED, hebrewStatus = "שגיאה: קובץ השמע לא נוצר")
-                return
+            // Avoid the default iOS/web_creator combination that produced HTTP 400
+            // and "Please sign in" in the reported failure. These clients do not
+            // require PO Tokens for GVS according to yt-dlp's current client matrix.
+            tryPlayerClients("initial")
+
+            if (rawFile == null || !rawFile!!.exists() || rawFile!!.length() == 0L) {
+                log("[yt-dlp] כל לקוחות YouTube החלופיים נכשלו. בודק ומעדכן את yt-dlp...")
+                rawLog("[INFO] All fallback player clients failed; updating yt-dlp nightly once.")
+                updateState(DownloadStatus.CONNECTING, hebrewStatus = "מעדכן את מנוע ההורדה ומנסה שיטות נוספות...")
+                val updateSucceeded = app.updateYtdlp()
+                rawLog("[update] yt-dlp update " + if (updateSucceeded) "succeeded" else "failed or unavailable")
+
+                if (updateSucceeded) {
+                    tryPlayerClients("after update")
+                }
+            }
+
+            if (rawFile == null || !rawFile!!.exists() || rawFile!!.length() == 0L) {
+                val details = attemptErrors.takeLast(6).joinToString(" | ")
+                throw YoutubeDLException(
+                    "All YouTube player clients failed. " + details
+                )
             }
 
             val ext = rawFile.extension.ifEmpty { "m4a" }
@@ -304,10 +343,17 @@ class DownloadManager(private val context: Context) {
         videoId: String,
         isLive: Boolean,
         rawBase: File,
+        playerClient: String,
         log: (String) -> Unit,
         rawLog: (String) -> Unit,
         updateState: (DownloadStatus, Int, String?, String?, String?, String?, Long?) -> Unit
     ): File? {
+        // Remove remnants from previous player-client attempts so a partial file
+        // cannot be mistaken for a successful result of the next strategy.
+        musicDir.listFiles { file ->
+            file.name.startsWith(rawBase.name + ".")
+        }?.forEach { it.delete() }
+
         val request = YoutubeDLRequest("https://www.youtube.com/watch?v=$videoId").apply {
             // Prefer native m4a (AAC) so no re-encoding is needed and the trimmer keeps working
             addOption("-f", "bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio/best")
@@ -317,6 +363,7 @@ class DownloadManager(private val context: Context) {
             addOption("--newline")
             addOption("--retries", "5")
             addOption("--socket-timeout", "20")
+            addOption("--extractor-args", "youtube:player_client=$playerClient")
             if (isLive) {
                 addOption("--no-part")
                 addOption("--hls-use-mpegts")
@@ -327,6 +374,7 @@ class DownloadManager(private val context: Context) {
             append("yt-dlp -f \"bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio/best\" ")
             append("-o \"${rawBase.name}.%(ext)s\" ")
             append("--no-playlist --no-mtime --newline --retries 5 --socket-timeout 20 ")
+            append("--extractor-args \"youtube:player_client=$playerClient\" ")
             if (isLive) append("--no-part --hls-use-mpegts ")
             append("https://www.youtube.com/watch?v=$videoId")
         }
@@ -386,8 +434,10 @@ class DownloadManager(private val context: Context) {
         }
 
         return musicDir.listFiles { f ->
-            f.name.startsWith(rawBase.name + ".") &&
-                !f.name.endsWith(".part") && !f.name.endsWith(".ytdl")
+            f.isFile &&
+                f.name.startsWith(rawBase.name + ".") &&
+                !f.name.endsWith(".part") && !f.name.endsWith(".ytdl") &&
+                f.length() > 0L
         }?.maxByOrNull { it.length() }
     }
 
@@ -417,7 +467,11 @@ class DownloadManager(private val context: Context) {
         val msg = e.message.orEmpty()
         return when {
             msg.contains("Sign in to confirm", ignoreCase = true) ||
-                msg.contains("not a bot", ignoreCase = true) -> "יוטיוב חוסמת (נדרש אימות). נסה שוב מאוחר יותר"
+                msg.contains("not a bot", ignoreCase = true) ||
+                msg.contains("Precondition check failed", ignoreCase = true) ||
+                msg.contains("FAILED_PRECONDITION", ignoreCase = true) ||
+                msg.contains("Please sign in", ignoreCase = true) ->
+                "YouTube דורש אימות נוסף או דחה את לקוחות הניגון. האפליקציה ניסתה לקוחות חלופיים ועדכון מנוע."
             msg.contains("Private video", ignoreCase = true) -> "הסרטון פרטי"
             msg.contains("unavailable", ignoreCase = true) -> "הסרטון לא זמין"
             msg.contains("age", ignoreCase = true) && msg.contains("restricted", ignoreCase = true) -> "הסרטון מוגבל גיל"
