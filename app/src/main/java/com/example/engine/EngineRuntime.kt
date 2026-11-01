@@ -325,6 +325,7 @@ object EngineRuntime {
     private fun safeVersion(file: File): String = try {
         readVersion(file)
     } catch (error: Exception) {
+        Log.w(TAG, "Version check unavailable for ${file.name}; continuing.", error)
         "unavailable: ${error.message ?: error.javaClass.simpleName}"
     }
 
@@ -333,6 +334,7 @@ object EngineRuntime {
         val output = runBinary(file, "-v")
         output.lineSequence().firstOrNull { it.isNotBlank() }?.trim() ?: "version unavailable"
     } catch (error: Exception) {
+        Log.w(TAG, "QuickJS version check unavailable; continuing.", error)
         "unavailable: ${error.message ?: error.javaClass.simpleName}"
     }
 
