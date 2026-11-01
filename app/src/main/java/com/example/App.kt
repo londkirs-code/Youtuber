@@ -39,15 +39,15 @@ class App : Application() {
 
     suspend fun awaitYtdlp(): Boolean = ytdlpReady.await()
 
-    suspend fun updateYtdlp(onLog: (String) -> Unit = {}): Boolean {
+    suspend fun updateYtdlp(logMessage: (String) -> Unit = {}): Boolean {
         if (!awaitYtdlp()) {
-            onLog("The embedded yt-dlp engine is not ready.")
+            logMessage("The embedded yt-dlp engine is not ready.")
             return false
         }
         return try {
             val callback = object : YtDlpBridgeCallback {
                 override fun onLog(level: String, message: String) {
-                    onLog("[" + level + "] " + message)
+                    logMessage("[" + level + "] " + message)
                 }
 
                 override fun onProgress(
@@ -61,11 +61,11 @@ class App : Application() {
                 override fun isCancelled(): Boolean = false
             }
             val result = EngineRuntime.updateYtDlp(this, callback)
-            onLog(result)
+            logMessage(result)
             true
         } catch (error: Exception) {
             Log.e(TAG, "yt-dlp update failed", error)
-            onLog("Update failed: " + (error.message ?: error.javaClass.simpleName))
+            logMessage("Update failed: " + (error.message ?: error.javaClass.simpleName))
             false
         }
     }
