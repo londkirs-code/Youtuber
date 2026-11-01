@@ -10,6 +10,7 @@ import importlib.util
 import io
 import json
 import os
+import platform
 import re
 import shlex
 import shutil
@@ -124,7 +125,7 @@ def versions():
         "ejs": ejs_version,
         "curl_cffi": importlib.util.find_spec("curl_cffi") is not None,
         "extractors": len(ytdlp.list_extractors()),
-        "architecture": getattr(ytdlp, "version", None).__class__.__name__,
+        "architecture": platform.machine(),
     })
 
 
