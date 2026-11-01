@@ -5,4 +5,5 @@ plugins {
   alias(libs.plugins.google.devtools.ksp) apply false
   alias(libs.plugins.secrets) apply false
   alias(libs.plugins.google.services) apply false
+  id("com.chaquo.python") version "17.2.0" apply false
 }
