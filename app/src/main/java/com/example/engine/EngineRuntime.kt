@@ -13,12 +13,10 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import java.io.File
-import java.io.FileOutputStream
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.zip.ZipInputStream
 
 interface YtDlpBridgeCallback {
     fun onLog(level: String, message: String)
@@ -67,35 +65,61 @@ object EngineRuntime {
         appContext = app
         if (!Python.isStarted()) Python.start(AndroidPlatform(app))
 
-        val runtimeRoot = File(app.noBackupFilesDir, "tunevault-runtime")
-        val ffmpegDir = File(runtimeRoot, "ffmpeg")
-        val ffmpeg = File(ffmpegDir, "ffmpeg")
-        val ffprobe = File(ffmpegDir, "ffprobe")
-        val bundledFfmpegValid = try {
-            ffmpeg.exists() && ffprobe.exists() &&
-                isVersionAtLeast(readVersion(ffmpeg), BUNDLED_FFMPEG_VERSION) &&
-                isVersionAtLeast(readVersion(ffprobe), BUNDLED_FFMPEG_VERSION)
+        val nativeDir = File(app.applicationInfo.nativeLibraryDir)
+        val ffmpegBinary = File(nativeDir, "libffmpeg.so")
+        val ffprobeBinary = File(nativeDir, "libffprobe.so")
+        if (!ffmpegBinary.isFile || !ffprobeBinary.isFile) {
+            throw IllegalStateException("Bundled FFmpeg native libraries are missing from $nativeDir")
+        }
+
+        try {
+            Log.i(TAG, "FFmpeg: " + readVersion(ffmpegBinary))
         } catch (error: Exception) {
-            Log.w(TAG, "Existing FFmpeg runtime is invalid; restoring the APK copy.", error)
-            false
+            Log.w(TAG, "FFmpeg version check unavailable; continuing.", error)
         }
-        if (!bundledFfmpegValid) {
-            installBundledFfmpeg(app, runtimeRoot)
-        }
-        if (!ffmpeg.setExecutable(true, false) || !ffprobe.setExecutable(true, false)) {
-            throw IllegalStateException("Could not mark FFmpeg/FFprobe executable")
+        try {
+            Log.i(TAG, "FFprobe: " + readVersion(ffprobeBinary))
+        } catch (error: Exception) {
+            Log.w(TAG, "FFprobe version check unavailable; continuing.", error)
         }
 
-        val quickJs = File(app.applicationInfo.nativeLibraryDir, "libqjs.so")
-        if (!quickJs.exists()) throw IllegalStateException("QuickJS executable libqjs.so is missing from the APK")
-        quickJs.setExecutable(true, false)
+        val runtimeRoot = File(app.noBackupFilesDir, "tunevault-runtime")
+        val ffmpegDir = File(runtimeRoot, "bin")
+        if (!ffmpegDir.exists() && !ffmpegDir.mkdirs()) {
+            throw IllegalStateException("Cannot create private FFmpeg link directory")
+        }
+        val ffmpegLink = File(ffmpegDir, "ffmpeg")
+        val ffprobeLink = File(ffmpegDir, "ffprobe")
+        var ffmpegLocation = ffmpegDir.absolutePath
+        try {
+            ffmpegLink.delete()
+            ffprobeLink.delete()
+            android.system.Os.symlink(ffmpegBinary.absolutePath, ffmpegLink.absolutePath)
+            android.system.Os.symlink(ffprobeBinary.absolutePath, ffprobeLink.absolutePath)
+            if (!ffmpegLink.exists() || !ffprobeLink.exists()) {
+                throw IllegalStateException("FFmpeg symbolic links are not usable")
+            }
+        } catch (error: Exception) {
+            Log.w(TAG, "FFmpeg symlink setup failed; passing libffmpeg.so directly.", error)
+            ffmpegLink.delete()
+            ffprobeLink.delete()
+            ffmpegLocation = ffmpegBinary.absolutePath
+        }
 
-        ffmpegDirectory = ffmpegDir
+        val quickJs = File(nativeDir, "libqjs.so")
+        try {
+            if (!quickJs.exists()) throw IllegalStateException("QuickJS executable is missing")
+            Log.i(TAG, "QuickJS: " + runBinary(quickJs, "-v").lineSequence().firstOrNull().orEmpty())
+        } catch (error: Exception) {
+            Log.w(TAG, "QuickJS version check unavailable; continuing.", error)
+        }
+
+        ffmpegDirectory = File(ffmpegLocation)
         quickJsExecutable = quickJs
         val userPackages = File(app.filesDir, "yt-dlp-python")
         val cache = File(app.cacheDir, "yt-dlp")
         Python.getInstance().getModule("tunevault_engine").callAttr(
-            "configure", ffmpegDir.absolutePath, quickJs.absolutePath,
+            "configure", ffmpegLocation, quickJs.absolutePath,
             cache.absolutePath, userPackages.absolutePath
         )
 
@@ -244,94 +268,6 @@ object EngineRuntime {
                 }
             }
         }
-
-    /**
-     * Restores the FFmpeg/FFprobe pair bundled with this APK. Both tools are
-     * built from the same pinned FFmpeg source tag and verified during CI.
-     */
-    suspend fun updateFfmpeg(context: Context, callback: YtDlpBridgeCallback): String =
-        withContext(Dispatchers.IO) {
-            ensureInitialized(context)
-            val app = context.applicationContext
-            val runtimeRoot = File(app.noBackupFilesDir, "tunevault-runtime")
-            installBundledFfmpeg(app, runtimeRoot)
-            val ffmpegVersion = readVersion(File(runtimeRoot, "ffmpeg/ffmpeg"))
-            val ffprobeVersion = readVersion(File(runtimeRoot, "ffmpeg/ffprobe"))
-            if (!ffmpegVersion.contains(BUNDLED_FFMPEG_VERSION) ||
-                !ffprobeVersion.contains(BUNDLED_FFMPEG_VERSION)
-            ) throw IllegalStateException("FFmpeg/FFprobe version mismatch after restore")
-            callback.onLog("SUCCESS", "Restored matching FFmpeg and FFprobe $BUNDLED_FFMPEG_VERSION from the APK.")
-            "FFmpeg ו־FFprobe שוחזרו בהצלחה לגרסה ${BUNDLED_FFMPEG_VERSION}."
-        }
-
-    suspend fun clearCache(context: Context) = withContext(Dispatchers.IO) {
-        ensureInitialized(context)
-        Python.getInstance().getModule("tunevault_engine").callAttr("clear_cache")
-    }
-
-    private fun ensureInitialized(context: Context) {
-        if (!initialized) throw IllegalStateException("Embedded yt-dlp engine is not initialized")
-    }
-
-    private fun getVersionsInternal(): EngineVersions {
-        val app = appContext ?: throw IllegalStateException("Engine context is unavailable")
-        val info = JSONObject(
-            Python.getInstance().getModule("tunevault_engine").callAttr("versions").toJava(String::class.java)
-        )
-        val ffmpegDir = ffmpegDirectory ?: File(app.noBackupFilesDir, "tunevault-runtime/ffmpeg")
-        val quickJs = quickJsExecutable ?: File(app.applicationInfo.nativeLibraryDir, "libqjs.so")
-        return EngineVersions(
-            python = info.optString("python", "unknown"),
-            ytDlp = info.optString("yt_dlp", "unknown"),
-            ejs = info.optString("ejs", "not installed"),
-            ffmpeg = safeVersion(File(ffmpegDir, "ffmpeg")),
-            ffprobe = safeVersion(File(ffmpegDir, "ffprobe")),
-            quickJs = safeQuickJsVersion(quickJs),
-            architecture = info.optString("architecture", "unknown"),
-            curlCffi = info.optBoolean("curl_cffi", false),
-            extractorCount = info.optInt("extractors", 0)
-        )
-    }
-
-    private fun installBundledFfmpeg(context: Context, runtimeRoot: File) {
-        val tempDir = File(runtimeRoot, "ffmpeg-bundled.tmp")
-        val targetDir = File(runtimeRoot, "ffmpeg")
-        tempDir.deleteRecursively()
-        if (!tempDir.mkdirs()) throw IllegalStateException("Cannot create bundled FFmpeg directory")
-        copyAsset(context, "ffmpeg/ffmpeg", File(tempDir, "ffmpeg"))
-        copyAsset(context, "ffmpeg/ffprobe", File(tempDir, "ffprobe"))
-        if (!File(tempDir, "ffmpeg").setExecutable(true, false) ||
-            !File(tempDir, "ffprobe").setExecutable(true, false)
-        ) {
-            tempDir.deleteRecursively()
-            throw IllegalStateException("Could not mark bundled FFmpeg/FFprobe executable")
-        }
-        val version = readVersion(File(tempDir, "ffmpeg"))
-        val probeVersion = readVersion(File(tempDir, "ffprobe"))
-        if (!version.contains(BUNDLED_FFMPEG_VERSION) || !probeVersion.contains(BUNDLED_FFMPEG_VERSION)) {
-            tempDir.deleteRecursively()
-            throw IllegalStateException("Bundled FFmpeg version mismatch: ${version}")
-        }
-        val backup = File(runtimeRoot, "ffmpeg-old")
-        backup.deleteRecursively()
-        if (targetDir.exists() && !targetDir.renameTo(backup)) {
-            tempDir.deleteRecursively()
-            throw IllegalStateException("Could not back up previous FFmpeg directory")
-        }
-        if (!tempDir.renameTo(targetDir)) {
-            if (backup.exists()) backup.renameTo(targetDir)
-            throw IllegalStateException("Could not install bundled FFmpeg")
-        }
-        backup.deleteRecursively()
-    }
-
-    private fun copyAsset(context: Context, asset: String, destination: File) {
-        destination.parentFile?.mkdirs()
-        context.assets.open(asset).use { input ->
-            FileOutputStream(destination).use { output -> input.copyTo(output) }
-        }
-        destination.setExecutable(true, false)
-    }
 
     private fun safeVersion(file: File): String = try {
         readVersion(file)
