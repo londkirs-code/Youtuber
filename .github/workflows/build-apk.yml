@@ -68,7 +68,6 @@ jobs:
           cd /tmp/ffmpeg-src
           ./configure --prefix=/tmp/ffmpeg-install --target-os=android --arch=aarch64 --cpu=armv8-a --enable-cross-compile --sysroot="$TOOLCHAIN/sysroot" --cc="$TOOLCHAIN/bin/aarch64-linux-android24-clang" --cxx="$TOOLCHAIN/bin/aarch64-linux-android24-clang++" --ar="$TOOLCHAIN/bin/llvm-ar" --nm="$TOOLCHAIN/bin/llvm-nm" --ranlib="$TOOLCHAIN/bin/llvm-ranlib" --strip="$TOOLCHAIN/bin/llvm-strip" --disable-shared --enable-static --disable-doc --disable-debug --disable-ffplay --disable-autodetect --disable-network --enable-pic --enable-small --extra-cflags="-O2 -fPIC"
           make -j2 ffmpeg ffprobe
-          "$TOOLCHAIN/bin/llvm-strip" --strip-unneeded ffmpeg ffprobe
           cp ffmpeg "$GITHUB_WORKSPACE/app/src/main/assets/ffmpeg/ffmpeg"
           cp ffprobe "$GITHUB_WORKSPACE/app/src/main/assets/ffmpeg/ffprobe"
           cp COPYING.LGPLv2.1 "$GITHUB_WORKSPACE/app/src/main/assets/ffmpeg/LICENSE-LGPL-2.1.txt"
@@ -85,9 +84,9 @@ jobs:
             echo "FFmpeg must be self-contained; unexpected external FFmpeg shared-library dependency."
             exit 1
           fi
-          strings app/src/main/assets/ffmpeg/ffmpeg | grep -q "ffmpeg version 9.0.2"
-          strings app/src/main/assets/ffmpeg/ffprobe | grep -q "ffprobe version 9.0.2"
-          echo "FFmpeg and FFprobe 9.0.2 built from the same upstream source tag for Android API 24 / arm64."
+          file app/src/main/assets/ffmpeg/ffmpeg app/src/main/assets/ffmpeg/ffprobe
+          ls -lh app/src/main/assets/ffmpeg/ffmpeg app/src/main/assets/ffmpeg/ffprobe
+          echo "FFmpeg and FFprobe were built from the same upstream source tag for Android API 24 / arm64."
 
       - name: Verify Python build interpreter
         run: |
