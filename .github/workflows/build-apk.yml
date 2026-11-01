@@ -30,10 +30,13 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Set up Python 3.14 for Chaquopy
+      - name: Set up Python 3.11 for Chaquopy
         uses: actions/setup-python@v5
         with:
-          python-version: '3.14'
+          python-version: '3.11'
+
+          python --version
+          python -c "import sys; print('BUILD_PYTHON=' + sys.executable)" >> "$GITHUB_ENV"
 
       - name: Set up Gradle 9.3.1
         uses: gradle/actions/setup-gradle@v4
@@ -112,7 +115,7 @@ jobs:
       - name: Verify Python build interpreter
         run: |
           python --version
-          python -c "import sys; assert sys.version_info[:2] == (3, 14), sys.version"
+          python -c "import sys; assert sys.version_info[:2] == (3, 11), sys.version; print(sys.executable)"
 
       - name: Verify existing repository debug signing key
         shell: bash
