@@ -35,6 +35,10 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Export Python 3.11 interpreter for Chaquopy
+        shell: bash
+        run: |
+          set -euo pipefail
           python --version
           python -c "import sys; print('BUILD_PYTHON=' + sys.executable)" >> "$GITHUB_ENV"
 
