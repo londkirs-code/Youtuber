@@ -46,32 +46,48 @@ jobs:
 
       - name: Install Android SDK packages
         run: |
-          sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
           yes | sdkmanager --licenses
 
-      - name: Download and verify FFmpeg 9.0.2 for Android arm64
+      - name: Preserve previous APK for update-signature verification
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p /tmp/ffmpeg-unpack app/src/main/assets/ffmpeg
-          curl -fL --retry 5 --retry-all-errors \
-            "https://github.com/Tyrrrz/FFmpegBin/releases/download/9.0.2/ffmpeg-android-arm64.zip" \
-            -o /tmp/ffmpeg-android-arm64.zip
-          echo "5557b6538846b73f95f28ae8a3b2b19499d5d5f42021ce2458f5c7add553b6fe  /tmp/ffmpeg-android-arm64.zip" | sha256sum -c -
-          unzip -q /tmp/ffmpeg-android-arm64.zip -d /tmp/ffmpeg-unpack
-          FFMPEG="$(find /tmp/ffmpeg-unpack -type f -name ffmpeg -print -quit)"
-          FFPROBE="$(find /tmp/ffmpeg-unpack -type f -name ffprobe -print -quit)"
-          test -n "$FFMPEG"
-          test -n "$FFPROBE"
-          test -s "$FFMPEG"
-          test -s "$FFPROBE"
-          cp "$FFMPEG" app/src/main/assets/ffmpeg/ffmpeg
-          cp "$FFPROBE" app/src/main/assets/ffmpeg/ffprobe
+          if [ -s downloads/TuneVault.apk ]; then
+            cp downloads/TuneVault.apk /tmp/TuneVault.previous.apk
+          fi
+
+      - name: Build matching FFmpeg and FFprobe 9.0.2 for Android arm64
+        shell: bash
+        run: |
+          set -euo pipefail
+          NDK="$ANDROID_HOME/ndk/27.2.12479018"
+          TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
+          mkdir -p app/src/main/assets/ffmpeg
+          git clone --depth 1 --branch n9.0.2 https://github.com/FFmpeg/FFmpeg.git /tmp/ffmpeg-src
+          cd /tmp/ffmpeg-src
+          ./configure --prefix=/tmp/ffmpeg-install --target-os=android --arch=aarch64 --cpu=armv8-a --enable-cross-compile --sysroot="$TOOLCHAIN/sysroot" --cc="$TOOLCHAIN/bin/aarch64-linux-android24-clang" --cxx="$TOOLCHAIN/bin/aarch64-linux-android24-clang++" --ar="$TOOLCHAIN/bin/llvm-ar" --nm="$TOOLCHAIN/bin/llvm-nm" --ranlib="$TOOLCHAIN/bin/llvm-ranlib" --strip="$TOOLCHAIN/bin/llvm-strip" --disable-shared --enable-static --disable-doc --disable-debug --disable-ffplay --disable-autodetect --disable-network --enable-pic --enable-small --extra-cflags="-O2 -fPIC"
+          make -j2 ffmpeg ffprobe
+          "$TOOLCHAIN/bin/llvm-strip" --strip-unneeded ffmpeg ffprobe
+          cp ffmpeg "$GITHUB_WORKSPACE/app/src/main/assets/ffmpeg/ffmpeg"
+          cp ffprobe "$GITHUB_WORKSPACE/app/src/main/assets/ffmpeg/ffprobe"
+          cp COPYING.LGPLv2.1 "$GITHUB_WORKSPACE/app/src/main/assets/ffmpeg/LICENSE-LGPL-2.1.txt"
+          cd "$GITHUB_WORKSPACE"
           chmod 755 app/src/main/assets/ffmpeg/ffmpeg app/src/main/assets/ffmpeg/ffprobe
-          file app/src/main/assets/ffmpeg/ffmpeg app/src/main/assets/ffmpeg/ffprobe
+          test -s app/src/main/assets/ffmpeg/ffmpeg
+          test -s app/src/main/assets/ffmpeg/ffprobe
+          test -s app/src/main/assets/ffmpeg/LICENSE-LGPL-2.1.txt
+          test "$(stat -c %s app/src/main/assets/ffmpeg/ffmpeg)" -gt 5000000
+          test "$(stat -c %s app/src/main/assets/ffmpeg/ffprobe)" -gt 5000000
           readelf -h app/src/main/assets/ffmpeg/ffmpeg | grep -q "AArch64"
           readelf -h app/src/main/assets/ffmpeg/ffprobe | grep -q "AArch64"
-          echo "FFmpeg 9.0.2 Android arm64 binaries verified by SHA-256 and ELF architecture."
+          if readelf -d app/src/main/assets/ffmpeg/ffmpeg | grep -E "libav(codec|format|util|filter).*\\.so"; then
+            echo "FFmpeg must be self-contained; unexpected external FFmpeg shared-library dependency."
+            exit 1
+          fi
+          strings app/src/main/assets/ffmpeg/ffmpeg | grep -q "ffmpeg version 9.0.2"
+          strings app/src/main/assets/ffmpeg/ffprobe | grep -q "ffprobe version 9.0.2"
+          echo "FFmpeg and FFprobe 9.0.2 built from the same upstream source tag for Android API 24 / arm64."
 
       - name: Verify Python build interpreter
         run: |
@@ -90,6 +106,7 @@ jobs:
           test -s "$APK"
           unzip -l "$APK" | grep -q "assets/ffmpeg/ffmpeg"
           unzip -l "$APK" | grep -q "assets/ffmpeg/ffprobe"
+          unzip -l "$APK" | grep -q "assets/ffmpeg/LICENSE-LGPL-2.1.txt"
           unzip -l "$APK" | grep -q "lib/arm64-v8a/libqjs.so"
           mkdir -p downloads
           cp "$APK" downloads/TuneVault.apk
@@ -99,8 +116,22 @@ jobs:
       - name: Verify APK signature
         run: |
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
           test -x "$APKSIGNER"
+          test -x "$AAPT"
           "$APKSIGNER" verify --verbose downloads/TuneVault.apk
+          "$AAPT" dump badging downloads/TuneVault.apk | grep -q "versionCode='6' versionName='1.5'"
+          if [ -s /tmp/TuneVault.previous.apk ]; then
+            "$APKSIGNER" verify /tmp/TuneVault.previous.apk
+            OLD_CERT="$("$APKSIGNER" verify --print-certs /tmp/TuneVault.previous.apk | sed -n 's/.*certificate SHA-256 digest: //p' | head -n 1)"
+            NEW_CERT="$("$APKSIGNER" verify --print-certs downloads/TuneVault.apk | sed -n 's/.*certificate SHA-256 digest: //p' | head -n 1)"
+            test -n "$OLD_CERT"
+            test "$OLD_CERT" = "$NEW_CERT"
+            OLD_VERSION_CODE="$("$AAPT" dump badging /tmp/TuneVault.previous.apk | sed -n "s/.*versionCode='\\([0-9]*\\)'.*/\\1/p")"
+            NEW_VERSION_CODE="$("$AAPT" dump badging downloads/TuneVault.apk | sed -n "s/.*versionCode='\\([0-9]*\\)'.*/\\1/p")"
+            test "$NEW_VERSION_CODE" -gt "$OLD_VERSION_CODE"
+            echo "Update signer and versionCode are compatible with the previously published APK."
+          fi
 
       - name: Publish APK to repository
         run: |
