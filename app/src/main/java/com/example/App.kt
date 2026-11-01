@@ -124,30 +124,53 @@ class App : Application() {
     /** Download code calls this before the first yt-dlp command. */
     suspend fun awaitYtdlp(): Boolean = ytdlpReady.await()
 
-    /** Updates yt-dlp and reports whether the download/install process succeeded. */
-    suspend fun updateYtdlp(): Boolean {
+    /**
+     * Updates yt-dlp using the newest nightly build first, then the latest stable release.
+     * The library stores the release tag separately from the actual executable, so detect and
+     * clear stale/mismatched metadata before asking it to update.
+     */
+    suspend fun updateYtdlp(onLog: ((String) -> Unit)? = null): Boolean {
         return updateMutex.withLock {
-            val previousVersion = YoutubeDL.version(this)
-            try {
-                val status = YoutubeDL.getInstance().updateYoutubeDL(
-                    this, YoutubeDL.UpdateChannel.NIGHTLY
-                )
-                val currentVersion = YoutubeDL.version(this)
-                val succeeded = status == YoutubeDL.UpdateStatus.DONE ||
-                    status == YoutubeDL.UpdateStatus.ALREADY_UP_TO_DATE
-                Log.i(
-                    TAG,
-                    "yt-dlp update status=$status, version=$previousVersion -> $currentVersion"
-                )
-                if (succeeded) {
-                    getSharedPreferences("ytdlp", MODE_PRIVATE)
-                        .edit().putLong("last_update", System.currentTimeMillis()).apply()
-                }
-                succeeded
+            val actualBefore = try {
+                verifyYtdlpEngine()
             } catch (e: Exception) {
-                Log.w(TAG, "yt-dlp update failed (previous version: $previousVersion): ${e.message}", e)
-                false
+                "unknown"
             }
+            val storedVersion = YoutubeDL.version(this)
+            if (storedVersion != null && storedVersion != actualBefore) {
+                getSharedPreferences("youtubedl-android", MODE_PRIVATE).edit()
+                    .remove("dlpVersion")
+                    .remove("dlpVersionName")
+                    .apply()
+                onLog?.invoke("Stored yt-dlp tag $storedVersion did not match executable $actualBefore; forcing update check.")
+            }
+
+            val channels = listOf(
+                "NIGHTLY" to YoutubeDL.UpdateChannel.NIGHTLY,
+                "STABLE" to YoutubeDL.UpdateChannel.STABLE
+            )
+            for ((channelName, channel) in channels) {
+                try {
+                    val status = YoutubeDL.getInstance().updateYoutubeDL(this, channel)
+                    val actualAfter = verifyYtdlpEngine()
+                    val succeeded = status == YoutubeDL.UpdateStatus.DONE ||
+                        status == YoutubeDL.UpdateStatus.ALREADY_UP_TO_DATE
+                    val message = "yt-dlp $channelName update status=$status; executable $actualBefore -> $actualAfter"
+                    Log.i(TAG, message)
+                    onLog?.invoke(message)
+                    if (succeeded) {
+                        getSharedPreferences("ytdlp", MODE_PRIVATE)
+                            .edit().putLong("last_update", System.currentTimeMillis()).apply()
+                        return@withLock true
+                    }
+                } catch (e: Exception) {
+                    val message = "yt-dlp $channelName update failed: ${e.javaClass.simpleName}: ${e.message}"
+                    Log.w(TAG, message, e)
+                    onLog?.invoke(message)
+                }
+            }
+            onLog?.invoke("Both NIGHTLY and STABLE yt-dlp update channels failed.")
+            false
         }
     }
 
