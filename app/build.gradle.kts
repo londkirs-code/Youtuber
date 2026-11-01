@@ -1,5 +1,10 @@
 import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
 
+// The workflow sets BUILD_VERSION_CODE from the latest published APK.
+// Keep 8 as the safe first-build fallback.
+val buildVersionCode = System.getenv("BUILD_VERSION_CODE")?.toIntOrNull() ?: 8
+val releaseKeyAlias = System.getenv("KEY_ALIAS") ?: "upload"
+
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.kotlin.compose)
@@ -11,23 +16,19 @@ plugins {
 
 android {
   namespace = "com.example"
-  compileSdk { version = release(36) { minorApiLevel = 1 } }
+  compileSdk = 36
 
   defaultConfig {
     applicationId = "com.aistudio.tunevault.ytmpro"
     minSdk = 24
     targetSdk = 36
-    versionCode = 7
-    versionName = "1.6"
+    versionCode = buildVersionCode
+    versionName = "1.7"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-
-    // Python and the native JavaScript runtime are bundled for arm64 Android devices.
     ndk { abiFilters += listOf("arm64-v8a") }
   }
 
-  // Chaquopy supplies the active Python 3.14 runtime. Exclude the obsolete Python 3.8
-  // binaries from the legacy youtubedl AAR; retain only its QuickJS executable.
   packaging {
     jniLibs {
       useLegacyPackaging = true
@@ -40,7 +41,7 @@ android {
       val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
       storeFile = file(keystorePath)
       storePassword = System.getenv("STORE_PASSWORD")
-      keyAlias = "upload"
+      keyAlias = releaseKeyAlias
       keyPassword = System.getenv("KEY_PASSWORD")
     }
     create("debugConfig") {
@@ -62,14 +63,17 @@ android {
       signingConfig = signingConfigs.getByName("debugConfig")
     }
   }
+
   compileOptions {
-    sourceCompatibility = JavaVersion.VERSION_11
-    targetCompatibility = JavaVersion.VERSION_11
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
   }
+
   buildFeatures {
     compose = true
     buildConfig = true
   }
+
   testOptions { unitTests { isIncludeAndroidResources = true } }
   dependenciesInfo {
     includeInApk = false
@@ -115,7 +119,6 @@ dependencies {
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
   implementation(libs.okhttp)
-  // Kept only for its QuickJS executable; its legacy Python 3.8 runtime is excluded above.
   implementation(libs.youtubedl.library)
   implementation(libs.androidx.work.runtime.ktx)
   testImplementation(libs.androidx.compose.ui.test.junit4)

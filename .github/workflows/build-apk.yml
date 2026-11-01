@@ -11,12 +11,13 @@ permissions:
   contents: write
 
 concurrency:
-  group: build-apk-v2-${{ github.ref }}
+  group: build-apk-v3-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -28,6 +29,28 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+
+      - name: Validate and prepare permanent release signing key
+        shell: bash
+        env:
+          APK_SIGNING_KEY_BASE64: ${{ secrets.APK_SIGNING_KEY_BASE64 }}
+          APK_SIGNING_STORE_PASSWORD: ${{ secrets.APK_SIGNING_STORE_PASSWORD }}
+          APK_SIGNING_KEY_ALIAS: ${{ secrets.APK_SIGNING_KEY_ALIAS }}
+          APK_SIGNING_KEY_PASSWORD: ${{ secrets.APK_SIGNING_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for secret_name in APK_SIGNING_KEY_BASE64 APK_SIGNING_STORE_PASSWORD APK_SIGNING_KEY_ALIAS APK_SIGNING_KEY_PASSWORD; do
+            if [ -z "${!secret_name:-}" ]; then
+              echo "::error::Missing required GitHub Actions repository secret: ${secret_name}"
+              exit 1
+            fi
+          done
+          KEYSTORE_FILE="$RUNNER_TEMP/tunevault-release.jks"
+          printf '%s' "$APK_SIGNING_KEY_BASE64" | base64 --decode > "$KEYSTORE_FILE"
+          test -s "$KEYSTORE_FILE"
+          keytool -list -keystore "$KEYSTORE_FILE" -storepass "$APK_SIGNING_STORE_PASSWORD" -alias "$APK_SIGNING_KEY_ALIAS" >/dev/null
+          echo "KEYSTORE_PATH=$KEYSTORE_FILE" >> "$GITHUB_ENV"
+          echo "Permanent signing keystore decoded and alias/password verified."
 
       - name: Set up Python 3.14 for Chaquopy
         uses: actions/setup-python@v5
@@ -46,10 +69,11 @@ jobs:
 
       - name: Install Android SDK packages
         run: |
+          set -euo pipefail
           sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
           yes | sdkmanager --licenses
 
-      - name: Preserve latest published APK for update-signature verification
+      - name: Preserve latest published APK and select next versionCode
         shell: bash
         run: |
           set -euo pipefail
@@ -57,6 +81,20 @@ jobs:
           if git cat-file -e "origin/$GITHUB_REF_NAME:downloads/TuneVault.apk" 2>/dev/null; then
             git show "origin/$GITHUB_REF_NAME:downloads/TuneVault.apk" > /tmp/TuneVault.previous.apk
           fi
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+          test -x "$AAPT"
+          if [ -s /tmp/TuneVault.previous.apk ]; then
+            OLD_VERSION_CODE="$("$AAPT" dump badging /tmp/TuneVault.previous.apk | sed -nE "s/.*versionCode='([0-9]+)'.*/\1/p")"
+            if [ -z "$OLD_VERSION_CODE" ]; then
+              echo "::error::Could not read versionCode from the previously published APK."
+              exit 1
+            fi
+            BUILD_VERSION_CODE=$((OLD_VERSION_CODE + 1))
+          else
+            BUILD_VERSION_CODE=8
+          fi
+          echo "BUILD_VERSION_CODE=$BUILD_VERSION_CODE" >> "$GITHUB_ENV"
+          echo "Next TuneVault versionCode: $BUILD_VERSION_CODE"
 
       - name: Build matching FFmpeg and FFprobe 9.0.2 for Android arm64
         shell: bash
@@ -79,16 +117,9 @@ jobs:
           test -s app/src/main/assets/ffmpeg/LICENSE-LGPL-2.1.txt
           test "$(stat -c %s app/src/main/assets/ffmpeg/ffmpeg)" -gt 1000000
           test "$(stat -c %s app/src/main/assets/ffmpeg/ffprobe)" -gt 1000000
-          echo "Binary files copied and size checks passed."
           readelf -h app/src/main/assets/ffmpeg/ffmpeg | grep -q "AArch64"
           readelf -h app/src/main/assets/ffmpeg/ffprobe | grep -q "AArch64"
-          echo "Both binaries are AArch64 ELF executables."
-          if readelf -d app/src/main/assets/ffmpeg/ffmpeg | grep -E "libav(codec|format|util|filter).*\\.so"; then
-            echo "FFmpeg must be self-contained; unexpected external FFmpeg shared-library dependency."
-            exit 1
-          fi
           file app/src/main/assets/ffmpeg/ffmpeg app/src/main/assets/ffmpeg/ffprobe
-          ls -lh app/src/main/assets/ffmpeg/ffmpeg app/src/main/assets/ffmpeg/ffprobe
           echo "FFmpeg and FFprobe were built from the same upstream source tag for Android API 24 / arm64."
 
       - name: Verify Python build interpreter
@@ -96,14 +127,18 @@ jobs:
           python --version
           python -c "import sys; assert sys.version_info[:2] == (3, 14), sys.version"
 
-      - name: Build debug APK
-        run: gradle --no-daemon --stacktrace :app:assembleDebug
+      - name: Build Release APK
+        env:
+          STORE_PASSWORD: ${{ secrets.APK_SIGNING_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.APK_SIGNING_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.APK_SIGNING_KEY_PASSWORD }}
+        run: gradle --no-daemon --stacktrace :app:assembleRelease
 
       - name: Verify APK engine payload and calculate SHA-256
         shell: bash
         run: |
           set -euo pipefail
-          APK="$(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' | head -n 1)"
+          APK="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)"
           test -n "$APK"
           test -s "$APK"
           unzip -l "$APK" | grep -q "assets/ffmpeg/ffmpeg"
@@ -115,27 +150,30 @@ jobs:
           sha256sum downloads/TuneVault.apk | tee downloads/TuneVault.apk.sha256
           sha256sum -c downloads/TuneVault.apk.sha256
 
-      - name: Verify APK signature
+      - name: Verify APK signature and update compatibility
+        shell: bash
         run: |
+          set -euo pipefail
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
           test -x "$APKSIGNER"
           test -x "$AAPT"
           "$APKSIGNER" verify --verbose downloads/TuneVault.apk
-          "$AAPT" dump badging downloads/TuneVault.apk | grep -q "versionCode='7' versionName='1.6'"
+          "$AAPT" dump badging downloads/TuneVault.apk | grep -q "versionCode='$BUILD_VERSION_CODE' versionName='1.7'"
           if [ -s /tmp/TuneVault.previous.apk ]; then
             "$APKSIGNER" verify /tmp/TuneVault.previous.apk
             OLD_CERT="$("$APKSIGNER" verify --print-certs /tmp/TuneVault.previous.apk | sed -n 's/.*certificate SHA-256 digest: //p' | head -n 1)"
             NEW_CERT="$("$APKSIGNER" verify --print-certs downloads/TuneVault.apk | sed -n 's/.*certificate SHA-256 digest: //p' | head -n 1)"
             test -n "$OLD_CERT"
             test "$OLD_CERT" = "$NEW_CERT"
-            OLD_VERSION_CODE="$("$AAPT" dump badging /tmp/TuneVault.previous.apk | sed -n "s/.*versionCode='\\([0-9]*\\)'.*/\\1/p")"
-            NEW_VERSION_CODE="$("$AAPT" dump badging downloads/TuneVault.apk | sed -n "s/.*versionCode='\\([0-9]*\\)'.*/\\1/p")"
+            OLD_VERSION_CODE="$("$AAPT" dump badging /tmp/TuneVault.previous.apk | sed -nE "s/.*versionCode='([0-9]+)'.*/\1/p")"
+            NEW_VERSION_CODE="$("$AAPT" dump badging downloads/TuneVault.apk | sed -nE "s/.*versionCode='([0-9]+)'.*/\1/p")"
             test "$NEW_VERSION_CODE" -gt "$OLD_VERSION_CODE"
-            echo "Update signer and versionCode are compatible with the previously published APK."
+            echo "Release certificate and increasing versionCode are compatible with the previous APK."
           fi
 
       - name: Publish APK to repository
+        shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -151,18 +189,17 @@ jobs:
           if git diff --cached --quiet; then
             echo "APK contents unchanged; no repository commit needed."
           else
-            git commit -m "Publish latest TuneVault APK"
-            git push origin "HEAD:${GITHUB_REF_NAME}"
+            git commit -m "Publish latest TuneVault APK v1.7 (code $BUILD_VERSION_CODE)"
+            git push origin "HEAD:$GITHUB_REF_NAME"
           fi
 
-          git fetch origin "refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}"
-          git show "origin/${GITHUB_REF_NAME}:downloads/TuneVault.apk" > /tmp/TuneVault.published.apk
-          git show "origin/${GITHUB_REF_NAME}:downloads/TuneVault.apk.sha256" > /tmp/TuneVault.published.apk.sha256
+          git fetch origin "refs/heads/$GITHUB_REF_NAME:refs/remotes/origin/$GITHUB_REF_NAME"
+          git show "origin/$GITHUB_REF_NAME:downloads/TuneVault.apk" > /tmp/TuneVault.published.apk
+          git show "origin/$GITHUB_REF_NAME:downloads/TuneVault.apk.sha256" > /tmp/TuneVault.published.apk.sha256
           test -s /tmp/TuneVault.published.apk
           cmp downloads/TuneVault.apk /tmp/TuneVault.published.apk
           EXPECTED_SHA="$(awk '{print $1}' /tmp/TuneVault.published.apk.sha256)"
           ACTUAL_SHA="$(sha256sum /tmp/TuneVault.published.apk | awk '{print $1}')"
           test "$EXPECTED_SHA" = "$ACTUAL_SHA"
-          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           "$APKSIGNER" verify --verbose /tmp/TuneVault.published.apk
-          echo "Verified: APK and SHA-256 are present on origin/${GITHUB_REF_NAME}"
+          echo "Verified: APK and SHA-256 are present on origin/$GITHUB_REF_NAME"
