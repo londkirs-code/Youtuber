@@ -33,6 +33,7 @@ data class EngineVersions(
     val ffmpeg: String,
     val ffprobe: String,
     val quickJs: String,
+    val architecture: String,
     val curlCffi: Boolean,
     val extractorCount: Int
 )
@@ -220,111 +221,23 @@ object EngineRuntime {
             }
         }
 
+    /**
+     * Restores the FFmpeg/FFprobe pair bundled with this APK. Both tools are
+     * built from the same pinned FFmpeg source tag and verified during CI.
+     */
     suspend fun updateFfmpeg(context: Context, callback: YtDlpBridgeCallback): String =
-        updateMutex.withLock {
-            withContext(Dispatchers.IO) {
-                ensureInitialized(context)
-                val app = context.applicationContext
-                val runtimeRoot = File(app.noBackupFilesDir, "tunevault-runtime")
-                val currentDir = File(runtimeRoot, "ffmpeg")
-                val tempDir = File(runtimeRoot, "ffmpeg-update.tmp")
-                val backupDir = File(runtimeRoot, "ffmpeg-backup")
-                val zipFile = File(app.cacheDir, "ffmpeg-android-update.zip")
-                tempDir.deleteRecursively()
-                backupDir.deleteRecursively()
-                try {
-                    callback.onLog("INFO", "Checking the latest Android FFmpeg release...")
-                    val release = http.newCall(
-                        Request.Builder().url(FFMPEG_RELEASE_API)
-                            .header("Accept", "application/vnd.github+json")
-                            .header("X-GitHub-Api-Version", "2022-11-28")
-                            .header("User-Agent", "TuneVault-Android").build()
-                    ).execute().use { response ->
-                        if (!response.isSuccessful) throw IllegalStateException("GitHub API HTTP ${response.code}")
-                        JSONObject(response.body?.string() ?: throw IllegalStateException("Empty FFmpeg release response"))
-                    }
-                    val tag = release.optString("tag_name")
-                    val assets = release.optJSONArray("assets") ?: throw IllegalStateException("FFmpeg release has no assets")
-                    var url: String? = null
-                    var digest = ""
-                    var expectedSize = 0L
-                    for (index in 0 until assets.length()) {
-                        val asset = assets.getJSONObject(index)
-                        if (asset.optString("name") == FFMPEG_ASSET) {
-                            url = asset.optString("browser_download_url")
-                            digest = asset.optString("digest").removePrefix("sha256:")
-                            expectedSize = asset.optLong("size")
-                            break
-                        }
-                    }
-                    if (url.isNullOrBlank() || digest.isBlank() || expectedSize <= 0L) {
-                        throw IllegalStateException("Latest release does not contain a verifiable ${FFMPEG_ASSET}")
-                    }
-                    val currentVersion = readVersion(File(currentDir, "ffmpeg"))
-                    if (currentVersion.contains(tag)) {
-                        callback.onLog("SUCCESS", "FFmpeg ${currentVersion} is already current.")
-                        return@withContext "FFmpeg ${currentVersion} כבר מעודכן."
-                    }
-
-                    callback.onLog("INFO", "Downloading FFmpeg ${tag} (${expectedSize} bytes)...")
-                    http.newCall(Request.Builder().url(url).header("User-Agent", "TuneVault-Android").build())
-                        .execute().use { response ->
-                            if (!response.isSuccessful) throw IllegalStateException("FFmpeg download HTTP ${response.code}")
-                            val body = response.body ?: throw IllegalStateException("Empty FFmpeg download")
-                            FileOutputStream(zipFile).use { output ->
-                                body.byteStream().use { input -> input.copyTo(output) }
-                                output.fd.sync()
-                            }
-                        }
-                    if (zipFile.length() != expectedSize) {
-                        throw IllegalStateException("FFmpeg archive size mismatch: ${zipFile.length()} vs ${expectedSize}")
-                    }
-                    if (!sha256(zipFile).equals(digest, ignoreCase = true)) {
-                        throw IllegalStateException("FFmpeg SHA-256 mismatch")
-                    }
-
-                    if (!tempDir.mkdirs()) throw IllegalStateException("Cannot create FFmpeg staging directory")
-                    ZipInputStream(zipFile.inputStream().buffered()).use { zip ->
-                        var entry = zip.nextEntry
-                        while (entry != null) {
-                            val baseName = File(entry.name).name
-                            if (!entry.isDirectory && (baseName == "ffmpeg" || baseName == "ffprobe")) {
-                                FileOutputStream(File(tempDir, baseName)).use { output -> zip.copyTo(output) }
-                            }
-                            zip.closeEntry()
-                            entry = zip.nextEntry
-                        }
-                    }
-                    val newFfmpeg = File(tempDir, "ffmpeg")
-                    val newFfprobe = File(tempDir, "ffprobe")
-                    if (!newFfmpeg.isFile || !newFfprobe.isFile || newFfmpeg.length() < 1_000_000L) {
-                        throw IllegalStateException("FFmpeg archive did not contain valid ffmpeg and ffprobe executables")
-                    }
-                    newFfmpeg.setExecutable(true, false)
-                    newFfprobe.setExecutable(true, false)
-                    val detected = readVersion(newFfmpeg)
-                    if (!detected.contains(tag)) {
-                        throw IllegalStateException("Downloaded FFmpeg version '$detected' does not match release '$tag'")
-                    }
-                    if (currentDir.exists() && !currentDir.renameTo(backupDir)) {
-                        throw IllegalStateException("Could not back up the current FFmpeg runtime")
-                    }
-                    if (!tempDir.renameTo(currentDir)) {
-                        if (backupDir.exists()) backupDir.renameTo(currentDir)
-                        throw IllegalStateException("Could not install the new FFmpeg runtime")
-                    }
-                    backupDir.deleteRecursively()
-                    callback.onLog("SUCCESS", "FFmpeg and FFprobe ${tag} installed and executable.")
-                    "FFmpeg ו־FFprobe עודכנו בהצלחה לגרסה ${tag}."
-                } catch (error: Exception) {
-                    tempDir.deleteRecursively()
-                    if (backupDir.exists() && !currentDir.exists()) backupDir.renameTo(currentDir)
-                    callback.onLog("ERROR", error.message ?: error.javaClass.simpleName)
-                    throw error
-                } finally {
-                    zipFile.delete()
-                }
-            }
+        withContext(Dispatchers.IO) {
+            ensureInitialized(context)
+            val app = context.applicationContext
+            val runtimeRoot = File(app.noBackupFilesDir, "tunevault-runtime")
+            installBundledFfmpeg(app, runtimeRoot)
+            val ffmpegVersion = readVersion(File(runtimeRoot, "ffmpeg/ffmpeg"))
+            val ffprobeVersion = readVersion(File(runtimeRoot, "ffmpeg/ffprobe"))
+            if (!ffmpegVersion.contains(BUNDLED_FFMPEG_VERSION) ||
+                !ffprobeVersion.contains(BUNDLED_FFMPEG_VERSION)
+            ) throw IllegalStateException("FFmpeg/FFprobe version mismatch after restore")
+            callback.onLog("SUCCESS", "Restored matching FFmpeg and FFprobe $BUNDLED_FFMPEG_VERSION from the APK.")
+            "FFmpeg ו־FFprobe שוחזרו בהצלחה לגרסה \${BUNDLED_FFMPEG_VERSION}."
         }
 
     suspend fun clearCache(context: Context) = withContext(Dispatchers.IO) {
@@ -349,7 +262,8 @@ object EngineRuntime {
             ejs = info.optString("ejs", "not installed"),
             ffmpeg = safeVersion(File(ffmpegDir, "ffmpeg")),
             ffprobe = safeVersion(File(ffmpegDir, "ffprobe")),
-            quickJs = safeVersion(quickJs),
+            quickJs = safeQuickJsVersion(quickJs),
+            architecture = info.optString("architecture", "unknown"),
             curlCffi = info.optBoolean("curl_cffi", false),
             extractorCount = info.optInt("extractors", 0)
         )
@@ -365,7 +279,8 @@ object EngineRuntime {
         File(tempDir, "ffmpeg").setExecutable(true, false)
         File(tempDir, "ffprobe").setExecutable(true, false)
         val version = readVersion(File(tempDir, "ffmpeg"))
-        if (!version.contains(BUNDLED_FFMPEG_VERSION)) {
+        val probeVersion = readVersion(File(tempDir, "ffprobe"))
+        if (!version.contains(BUNDLED_FFMPEG_VERSION) || !probeVersion.contains(BUNDLED_FFMPEG_VERSION)) {
             tempDir.deleteRecursively()
             throw IllegalStateException("Bundled FFmpeg version mismatch: ${version}")
         }
@@ -393,7 +308,15 @@ object EngineRuntime {
     private fun safeVersion(file: File): String = try {
         readVersion(file)
     } catch (error: Exception) {
-        "unavailable: ${error.message ?: error.javaClass.simpleName}"
+        "unavailable: \${error.message ?: error.javaClass.simpleName}"
+    }
+
+    private fun safeQuickJsVersion(file: File): String = try {
+        if (!file.exists()) throw IllegalStateException("QuickJS executable is missing")
+        val output = runBinary(file, "-v")
+        output.lineSequence().firstOrNull { it.isNotBlank() }?.trim() ?: "version unavailable"
+    } catch (error: Exception) {
+        "unavailable: \${error.message ?: error.javaClass.simpleName}"
     }
 
     private fun readVersion(executable: File): String {
