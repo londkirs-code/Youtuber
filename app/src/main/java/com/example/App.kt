@@ -4,6 +4,7 @@ import android.app.Application
 import android.util.Log
 import com.example.download.DownloadManager
 import com.example.engine.EngineRuntime
+import com.example.engine.YtDlpBridgeCallback
 import com.example.notify.Notifier
 import com.example.work.ChannelCheckWorker
 import kotlinx.coroutines.CompletableDeferred
@@ -37,6 +38,37 @@ class App : Application() {
     }
 
     suspend fun awaitYtdlp(): Boolean = ytdlpReady.await()
+
+    suspend fun updateYtdlp(onLog: (String) -> Unit = {}): Boolean {
+        if (!awaitYtdlp()) {
+            onLog("The embedded yt-dlp engine is not ready.")
+            return false
+        }
+        return try {
+            val callback = object : YtDlpBridgeCallback {
+                override fun onLog(level: String, message: String) {
+                    onLog("[" + level + "] " + message)
+                }
+
+                override fun onProgress(
+                    percent: Double,
+                    downloadedBytes: Long,
+                    totalBytes: Long,
+                    speed: String,
+                    etaSeconds: Long
+                ) = Unit
+
+                override fun isCancelled(): Boolean = false
+            }
+            val result = EngineRuntime.updateYtDlp(this, callback)
+            onLog(result)
+            true
+        } catch (error: Exception) {
+            Log.e(TAG, "yt-dlp update failed", error)
+            onLog("Update failed: " + (error.message ?: error.javaClass.simpleName))
+            false
+        }
+    }
 
     companion object {
         private const val TAG = "App"
