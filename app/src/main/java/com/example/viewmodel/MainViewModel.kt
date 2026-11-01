@@ -11,6 +11,9 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.local.AppDatabase
 import com.example.data.local.PlaylistEntity
 import com.example.data.local.PlaylistTrackCrossRef
+import com.example.data.local.SavedChannelEntity
+import com.example.data.local.SavedVideoEntity
+import com.example.data.local.SearchHistoryEntity
 import com.example.data.local.TrackEntity
 import com.example.data.model.AudioQuality
 import com.example.data.model.DownloadTask
@@ -52,10 +55,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _searchResults = MutableStateFlow<List<SearchResultItem>>(emptyList())
     val searchResults: StateFlow<List<SearchResultItem>> = _searchResults.asStateFlow()
 
-    private val _searchHistory = MutableStateFlow<List<String>>(
-        listOf("מוזיקה ישראלית", "שירים לפוקוס ולימודים", "פודקאסט", "ריכוז ועבודה")
-    )
-    val searchHistory: StateFlow<List<String>> = _searchHistory.asStateFlow()
+    val searchHistory: StateFlow<List<SearchHistoryEntity>> = database.searchHistoryDao().getAllHistory()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val savedVideos: StateFlow<List<SavedVideoEntity>> = database.savedMediaDao().getAllSavedVideos()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val savedChannels: StateFlow<List<SavedChannelEntity>> = database.savedMediaDao().getAllSavedChannels()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private val _isSearching = MutableStateFlow(false)
     val isSearching: StateFlow<Boolean> = _isSearching.asStateFlow()
@@ -120,7 +127,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             playerService = localBinder.getService()
             _isPlayerBound.value = true
 
-            // Observe player service flows
             playerService?.let { s ->
                 viewModelScope.launch { s.currentTrack.collect { _currentTrack.value = it } }
                 viewModelScope.launch { s.isPlaying.collect { _isPlaying.value = it } }
@@ -167,14 +173,61 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _searchSuggestions.value = emptyList()
         _isSearching.value = true
 
-        // Update history
-        val updatedHistory = (listOf(q) + _searchHistory.value.filter { it != q }).take(10)
-        _searchHistory.value = updatedHistory
+        // Persist to Room search history
+        viewModelScope.launch {
+            database.searchHistoryDao().insertSearch(SearchHistoryEntity(query = q))
+        }
 
         viewModelScope.launch {
             val results = YouTubeEngine.searchVideos(q)
             _searchResults.value = results
             _isSearching.value = false
+        }
+    }
+
+    fun deleteSearchHistoryItem(query: String) {
+        viewModelScope.launch {
+            database.searchHistoryDao().deleteSearch(query)
+        }
+    }
+
+    fun clearAllSearchHistory() {
+        viewModelScope.launch {
+            database.searchHistoryDao().clearAllHistory()
+        }
+    }
+
+    fun toggleSaveVideo(item: SearchResultItem) {
+        viewModelScope.launch {
+            val isAlreadySaved = savedVideos.value.any { it.id == item.id }
+            if (isAlreadySaved) {
+                database.savedMediaDao().deleteSavedVideo(item.id)
+            } else {
+                database.savedMediaDao().saveVideo(
+                    SavedVideoEntity(
+                        id = item.id,
+                        title = item.title,
+                        channelTitle = item.channelTitle,
+                        durationText = item.durationText,
+                        durationMs = item.durationMs,
+                        thumbnailUrl = item.thumbnailUrl,
+                        viewsText = item.viewsText,
+                        isLive = item.isLive
+                    )
+                )
+            }
+        }
+    }
+
+    fun toggleSaveChannel(channelTitle: String) {
+        if (channelTitle.isBlank()) return
+        viewModelScope.launch {
+            val isAlreadySaved = savedChannels.value.any { it.channelTitle == channelTitle }
+            if (isAlreadySaved) {
+                database.savedMediaDao().deleteSavedChannel(channelTitle)
+            } else {
+                database.savedMediaDao().saveChannel(SavedChannelEntity(channelTitle = channelTitle))
+            }
         }
     }
 
@@ -215,7 +268,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         closeTrimmerDialog()
-        // Switch to downloads tab to show real-time progress
         _currentTab.value = 1
     }
 

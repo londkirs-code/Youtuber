@@ -1,10 +1,8 @@
 package com.example.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -21,6 +19,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.TrendingUp
@@ -28,26 +27,27 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.SuggestionChipDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.local.SearchHistoryEntity
 import com.example.ui.theme.ScarletRed
 import com.example.ui.theme.SurfaceCard
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.ui.theme.TextTertiary
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -57,7 +57,9 @@ fun YouTubeSearchBar(
     onSearch: (String) -> Unit,
     onClear: () -> Unit,
     suggestions: List<String>,
-    history: List<String>,
+    history: List<SearchHistoryEntity>,
+    onDeleteHistoryItem: (String) -> Unit,
+    onClearAllHistory: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
@@ -149,37 +151,62 @@ fun YouTubeSearchBar(
             }
         }
 
-        // Recent searches history pills
+        // Persistent Search History with delete actions
         if (query.isEmpty() && history.isNotEmpty()) {
             Spacer(modifier = Modifier.height(10.dp))
             Row(
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Icon(
-                    imageVector = Icons.Default.History,
-                    contentDescription = null,
-                    tint = TextSecondary,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = "חיפושים אחרונים",
-                    color = TextSecondary,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.History,
+                        contentDescription = null,
+                        tint = ScarletRed,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "היסטוריית חיפושים (${history.size})",
+                        color = TextPrimary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                TextButton(
+                    onClick = onClearAllHistory,
+                    modifier = Modifier.height(30.dp)
+                ) {
+                    Text("נקה הכל", color = TextTertiary, fontSize = 11.sp)
+                }
             }
-            Spacer(modifier = Modifier.height(6.dp))
+
+            Spacer(modifier = Modifier.height(4.dp))
+
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                history.take(6).forEach { item ->
+                history.take(8).forEach { item ->
                     SuggestionChip(
-                        onClick = { onSearch(item) },
-                        label = { Text(item, fontSize = 12.sp, color = TextPrimary) },
+                        onClick = { onSearch(item.query) },
+                        label = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(item.query, fontSize = 12.sp, color = TextPrimary)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "מחק מההיסטוריה",
+                                    tint = TextTertiary,
+                                    modifier = Modifier
+                                        .size(14.dp)
+                                        .clickable { onDeleteHistoryItem(item.query) }
+                                )
+                            }
+                        },
                         colors = SuggestionChipDefaults.suggestionChipColors(
                             containerColor = SurfaceCard
                         ),

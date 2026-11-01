@@ -100,6 +100,8 @@ fun MainAppScreen(viewModel: MainViewModel) {
     val searchSuggestions by viewModel.searchSuggestions.collectAsState()
     val searchResults by viewModel.searchResults.collectAsState()
     val searchHistory by viewModel.searchHistory.collectAsState()
+    val savedVideos by viewModel.savedVideos.collectAsState()
+    val savedChannels by viewModel.savedChannels.collectAsState()
     val isSearching by viewModel.isSearching.collectAsState()
 
     val downloadTasks by viewModel.downloadTasks.collectAsState()
@@ -241,8 +243,14 @@ fun MainAppScreen(viewModel: MainViewModel) {
                     onClear = { viewModel.clearSearch() },
                     suggestions = searchSuggestions,
                     history = searchHistory,
+                    onDeleteHistoryItem = { viewModel.deleteSearchHistoryItem(it) },
+                    onClearAllHistory = { viewModel.clearAllSearchHistory() },
                     searchResults = searchResults,
                     isSearching = isSearching,
+                    savedVideos = savedVideos,
+                    savedChannels = savedChannels,
+                    onToggleSaveVideo = { viewModel.toggleSaveVideo(it) },
+                    onToggleSaveChannel = { viewModel.toggleSaveChannel(it) },
                     onDownload = { viewModel.startDownload(it, applyTrim = false) },
                     onTrim = { viewModel.openTrimmerDialog(it) }
                 )

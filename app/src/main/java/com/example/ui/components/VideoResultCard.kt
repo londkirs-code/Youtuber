@@ -16,15 +16,19 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FiberManualRecord
-import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -41,16 +45,23 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.data.model.SearchResultItem
 import com.example.ui.theme.LiveBadgeColor
+import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.ScarletRed
 import com.example.ui.theme.SurfaceCard
+import com.example.ui.theme.SurfaceDark
 import com.example.ui.theme.SurfaceHighlight
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.ui.theme.TextTertiary
+import com.example.ui.theme.WarningAmber
 
 @Composable
 fun VideoResultCard(
     item: SearchResultItem,
+    isVideoSaved: Boolean = false,
+    isChannelSaved: Boolean = false,
+    onToggleSaveVideo: () -> Unit = {},
+    onToggleSaveChannel: () -> Unit = {},
     onDownload: () -> Unit,
     onTrim: () -> Unit,
     modifier: Modifier = Modifier
@@ -63,7 +74,7 @@ fun VideoResultCard(
             .testTag("video_result_card")
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
-            // 16:9 Thumbnail with Duration / LIVE Badge
+            // 16:9 Thumbnail with Duration / LIVE Badge and Save Video Button
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -78,7 +89,26 @@ fun VideoResultCard(
                     modifier = Modifier.matchParentSize()
                 )
 
-                // Duration or Live Badge
+                // Save Video Bookmark Button on top right
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp)
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.65f))
+                        .clickable { onToggleSaveVideo() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = if (isVideoSaved) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                        contentDescription = if (isVideoSaved) "הסר מסרטונים שמורים" else "שמור סרטון",
+                        tint = if (isVideoSaved) ScarletRed else Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                // Duration or Live Badge on bottom right
                 if (item.isLive) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -161,11 +191,38 @@ fun VideoResultCard(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
+
+                    // Save Channel button
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isChannelSaved) WarningAmber.copy(alpha = 0.15f) else Color.Transparent)
+                            .clickable { onToggleSaveChannel() }
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = if (isChannelSaved) Icons.Default.Star else Icons.Default.StarBorder,
+                                contentDescription = if (isChannelSaved) "ערוץ שמור" else "שמור ערוץ",
+                                tint = if (isChannelSaved) WarningAmber else TextTertiary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text(
+                                text = if (isChannelSaved) "ערוץ שמור" else "שמור ערוץ",
+                                color = if (isChannelSaved) WarningAmber else TextTertiary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+
                     if (item.viewsText.isNotBlank()) {
+                        Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = "• ${item.viewsText}",
                             color = TextTertiary,
-                            fontSize = 12.sp
+                            fontSize = 11.sp
                         )
                     }
                 }
