@@ -196,3 +196,5 @@ jobs:
           test "$EXPECTED_SHA" = "$ACTUAL_SHA"
           "$APKSIGNER" verify --verbose /tmp/TuneVault.published.apk
           echo "Verified: APK and SHA-256 are present on origin/$GITHUB_REF_NAME"
+
+# Manual rebuild requested on 2026-11-01; keep this workflow eligible for push-triggered builds.
