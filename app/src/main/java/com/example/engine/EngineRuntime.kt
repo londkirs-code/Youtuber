@@ -237,7 +237,7 @@ object EngineRuntime {
                 !ffprobeVersion.contains(BUNDLED_FFMPEG_VERSION)
             ) throw IllegalStateException("FFmpeg/FFprobe version mismatch after restore")
             callback.onLog("SUCCESS", "Restored matching FFmpeg and FFprobe $BUNDLED_FFMPEG_VERSION from the APK.")
-            "FFmpeg ו־FFprobe שוחזרו בהצלחה לגרסה \${BUNDLED_FFMPEG_VERSION}."
+            "FFmpeg ו־FFprobe שוחזרו בהצלחה לגרסה ${BUNDLED_FFMPEG_VERSION}."
         }
 
     suspend fun clearCache(context: Context) = withContext(Dispatchers.IO) {
@@ -308,7 +308,7 @@ object EngineRuntime {
     private fun safeVersion(file: File): String = try {
         readVersion(file)
     } catch (error: Exception) {
-        "unavailable: \${error.message ?: error.javaClass.simpleName}"
+        "unavailable: ${error.message ?: error.javaClass.simpleName}"
     }
 
     private fun safeQuickJsVersion(file: File): String = try {
@@ -316,7 +316,7 @@ object EngineRuntime {
         val output = runBinary(file, "-v")
         output.lineSequence().firstOrNull { it.isNotBlank() }?.trim() ?: "version unavailable"
     } catch (error: Exception) {
-        "unavailable: \${error.message ?: error.javaClass.simpleName}"
+        "unavailable: ${error.message ?: error.javaClass.simpleName}"
     }
 
     private fun readVersion(executable: File): String {
