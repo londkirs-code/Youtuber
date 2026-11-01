@@ -99,6 +99,16 @@ jobs:
           file app/src/main/jniLibs/arm64-v8a/libffmpeg.so app/src/main/jniLibs/arm64-v8a/libffprobe.so
           echo "FFmpeg and FFprobe were built from the same upstream source tag for Android API 24 / arm64."
 
+      - name: Verify no legacy youtubedl-android source references
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -RIn --exclude-dir=build "yausername" app/src; then
+            echo "::error::Legacy youtubedl-android references remain under app/src."
+            exit 1
+          fi
+          echo "Verified: zero yausername references under app/src."
+
       - name: Verify Python build interpreter
         run: |
           python --version
