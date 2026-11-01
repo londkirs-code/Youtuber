@@ -67,7 +67,7 @@ jobs:
           mkdir -p app/src/main/assets/ffmpeg
           git clone --depth 1 --branch n9.0.2 https://github.com/FFmpeg/FFmpeg.git /tmp/ffmpeg-src
           cd /tmp/ffmpeg-src
-          ./configure --prefix=/tmp/ffmpeg-install --target-os=android --arch=aarch64 --cpu=armv8-a --enable-cross-compile --sysroot="$TOOLCHAIN/sysroot" --cc="$TOOLCHAIN/bin/aarch64-linux-android24-clang" --cxx="$TOOLCHAIN/bin/aarch64-linux-android24-clang++" --ar="$TOOLCHAIN/bin/llvm-ar" --nm="$TOOLCHAIN/bin/llvm-nm" --ranlib="$TOOLCHAIN/bin/llvm-ranlib" --strip="$TOOLCHAIN/bin/llvm-strip" --disable-shared --enable-static --disable-doc --disable-debug --disable-ffplay --disable-autodetect --disable-network --enable-pic --enable-small --extra-cflags="-O2 -fPIC"
+          ./configure --prefix=/tmp/ffmpeg-install --target-os=android --arch=aarch64 --cpu=armv8-a --enable-cross-compile --sysroot="$TOOLCHAIN/sysroot" --cc="$TOOLCHAIN/bin/aarch64-linux-android24-clang" --cxx="$TOOLCHAIN/bin/aarch64-linux-android24-clang++" --ar="$TOOLCHAIN/bin/llvm-ar" --nm="$TOOLCHAIN/bin/llvm-nm" --ranlib="$TOOLCHAIN/bin/llvm-ranlib" --strip="$TOOLCHAIN/bin/llvm-strip" --disable-shared --enable-static --disable-doc --disable-debug --disable-ffplay --disable-autodetect --disable-network --enable-pic --enable-small --extra-cflags="-O2 -fPIC" --extra-ldflags="-Wl,-z,max-page-size=16384"
           make -j2 ffmpeg ffprobe
           cp ffmpeg "$GITHUB_WORKSPACE/app/src/main/assets/ffmpeg/ffmpeg"
           cp ffprobe "$GITHUB_WORKSPACE/app/src/main/assets/ffmpeg/ffprobe"
