@@ -1,5 +1,6 @@
 package com.example.data.local
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
@@ -17,5 +18,7 @@ data class TrackEntity(
     val isLiveCapture: Boolean = false,
     val isTrimmed: Boolean = false,
     val trimStartMs: Long = 0L,
-    val trimEndMs: Long = 0L
+    val trimEndMs: Long = 0L,
+    @ColumnInfo(defaultValue = "0")
+    val isPartial: Boolean = false
 )

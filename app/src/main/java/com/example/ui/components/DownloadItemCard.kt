@@ -106,6 +106,7 @@ fun DownloadItemCard(
     Card(
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = SurfaceCard),
+        border = androidx.compose.foundation.BorderStroke(1.dp, BorderDark),
         modifier = modifier
             .fillMaxWidth()
             .testTag("download_task_card")

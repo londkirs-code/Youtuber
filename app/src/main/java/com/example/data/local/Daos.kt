@@ -26,6 +26,9 @@ interface TrackDao {
 
     @Query("DELETE FROM tracks WHERE id = :id")
     suspend fun deleteTrackById(id: String)
+
+    @Query("UPDATE tracks SET isPartial = :isPartial WHERE id = :id")
+    suspend fun updateTrackPartial(id: String, isPartial: Boolean)
 }
 
 @Dao

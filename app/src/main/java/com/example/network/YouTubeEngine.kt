@@ -446,6 +446,43 @@ object YouTubeEngine {
         }
     }
 
+    /** Latest uploads from a channel sorted newest first (Requirement: סרטונים מערוץ שמור מהחדש לישן) */
+    suspend fun getChannelVideosNewestFirst(channelId: String, channelTitle: String): List<SearchResultItem> = withContext(Dispatchers.IO) {
+        val feed = if (channelId.isNotBlank()) fetchChannelFeed(channelId) else emptyList()
+        if (feed.isNotEmpty()) {
+            feed.map { entry ->
+                SearchResultItem(
+                    id = entry.videoId,
+                    title = entry.title,
+                    channelTitle = channelTitle,
+                    durationText = "סרטון חדש",
+                    durationMs = 0L,
+                    thumbnailUrl = "https://i.ytimg.com/vi/${entry.videoId}/hqdefault.jpg",
+                    viewsText = "",
+                    uploadedText = formatPublishedTime(entry.published),
+                    isLive = false,
+                    channelId = channelId
+                )
+            }
+        } else {
+            // Fallback: search videos for this channel title
+            searchVideos(channelTitle).filter {
+                it.channelTitle.equals(channelTitle, ignoreCase = true) || it.title.contains(channelTitle, ignoreCase = true)
+            }
+        }
+    }
+
+    private fun formatPublishedTime(published: String): String {
+        return try {
+            if (published.length >= 10) {
+                val parts = published.substring(0, 10).split("-")
+                if (parts.size == 3) "${parts[2]}/${parts[1]}/${parts[0]}" else published
+            } else published
+        } catch (_: Exception) {
+            published
+        }
+    }
+
     private fun decodeXml(s: String): String = s
         .replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
         .replace("&quot;", "\"").replace("&#39;", "'").replace("&apos;", "'")

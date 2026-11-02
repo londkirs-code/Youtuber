@@ -68,6 +68,8 @@ import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.ui.theme.TextTertiary
 
+import androidx.compose.material.icons.filled.Close
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FullPlayerSheet(
@@ -87,6 +89,7 @@ fun FullPlayerSheet(
     onSetSpeed: (Float) -> Unit,
     onToggleRepeat: () -> Unit,
     onToggleShuffle: () -> Unit,
+    onClosePlayback: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -99,26 +102,31 @@ fun FullPlayerSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
+        dragHandle = null,
         containerColor = ObsidianDark,
-        modifier = Modifier.testTag("full_player_sheet")
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag("full_player_sheet")
     ) {
         // Compact single-page container (no scroll required!)
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 4.dp)
+                .fillMaxSize()
+                .padding(horizontal = 20.dp, vertical = 8.dp)
         ) {
             // Header Bar
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp, bottom = 4.dp)
             ) {
                 IconButton(onClick = onDismiss, modifier = Modifier.size(36.dp)) {
                     Icon(
                         imageVector = Icons.Default.KeyboardArrowDown,
-                        contentDescription = "סגור",
+                        contentDescription = "מזער",
                         tint = TextSecondary,
                         modifier = Modifier.size(28.dp)
                     )
@@ -126,10 +134,17 @@ fun FullPlayerSheet(
                 Text(
                     text = "מתנגן כעת",
                     color = TextSecondary,
-                    fontSize = 13.sp,
+                    fontSize = 14.sp,
                     fontWeight = FontWeight.Medium
                 )
-                Spacer(modifier = Modifier.size(36.dp))
+                IconButton(onClick = onClosePlayback, modifier = Modifier.size(36.dp).testTag("full_player_stop_btn")) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "סגור נגן",
+                        tint = ScarletRed,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(8.dp))

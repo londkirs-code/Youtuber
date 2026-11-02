@@ -45,6 +45,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import com.example.data.model.DownloadStatus
 import com.example.notify.Notifier
@@ -53,6 +56,7 @@ import com.example.ui.components.FullPlayerSheet
 import com.example.ui.components.MiniPlayer
 import com.example.ui.screens.DownloadsScreen
 import com.example.ui.screens.LibraryScreen
+import com.example.ui.screens.SavedContentScreen
 import com.example.ui.screens.SearchScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.theme.BorderDark
@@ -63,6 +67,8 @@ import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.ui.theme.TuneVaultTheme
 import com.example.viewmodel.MainViewModel
+
+import androidx.compose.material.icons.filled.Bookmark
 
 class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
@@ -87,7 +93,10 @@ class MainActivity : ComponentActivity() {
         setContent {
             val settings by viewModel.settings.collectAsState()
 
-            TuneVaultTheme(isAmoled = settings.isAmoledTheme) {
+            TuneVaultTheme(
+                isDarkMode = settings.isDarkMode,
+                isAmoled = settings.isAmoledTheme
+            ) {
                 MainAppScreen(viewModel = viewModel)
             }
         }
@@ -104,7 +113,7 @@ class MainActivity : ComponentActivity() {
         if (!playTrackId.isNullOrBlank()) {
             intent.removeExtra(Notifier.EXTRA_PLAY_TRACK_ID)
             viewModel.playTrackById(playTrackId)
-            viewModel.selectTab(2)
+            viewModel.selectTab(3)
             return
         }
 
@@ -116,6 +125,19 @@ class MainActivity : ComponentActivity() {
             viewModel.selectTab(0)
             return
         }
+
+        // Direct YouTube Link Opener (Open with Youtuber)
+        if (intent?.action == Intent.ACTION_VIEW) {
+            val viewUrl = intent.dataString
+            if (!viewUrl.isNullOrBlank()) {
+                viewModel.onSearchQueryChanged(viewUrl)
+                viewModel.executeSearch(viewUrl)
+                viewModel.selectTab(0)
+                return
+            }
+        }
+
+        // Share text / link
         if (intent?.action == Intent.ACTION_SEND && intent.type == "text/plain") {
             val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT) ?: ""
             if (sharedText.isNotBlank()) {
@@ -160,6 +182,8 @@ fun MainAppScreen(viewModel: MainViewModel) {
         it.status != DownloadStatus.COMPLETED && it.status != DownloadStatus.FAILED
     }
 
+    var isSavedContentOpen by remember { mutableStateOf(false) }
+
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
         bottomBar = {
@@ -182,12 +206,13 @@ fun MainAppScreen(viewModel: MainViewModel) {
                             durationMs = durationMs,
                             onTogglePlayPause = { viewModel.togglePlayPause() },
                             onNext = { viewModel.playNext() },
+                            onClose = { viewModel.stopPlayback() },
                             onClick = { viewModel.setFullPlayerOpen(true) }
                         )
                     }
                 }
 
-                // Bottom Navigation Bar with reselection reload
+                // Bottom Navigation Bar with 5 tabs and reselection reload
                 NavigationBar(
                     containerColor = SurfaceDark,
                     tonalElevation = 0.dp,
@@ -208,9 +233,33 @@ fun MainAppScreen(viewModel: MainViewModel) {
                         modifier = Modifier.testTag("nav_search_tab")
                     )
 
+                    val savedTotal = savedChannels.size + savedVideos.size
                     NavigationBarItem(
                         selected = currentTab == 1,
                         onClick = { viewModel.onTabClicked(1) },
+                        icon = {
+                            if (savedTotal > 0) {
+                                BadgedBox(badge = { Badge { Text("$savedTotal") } }) {
+                                    Icon(Icons.Default.Bookmark, contentDescription = "שמורים")
+                                }
+                            } else {
+                                Icon(Icons.Default.Bookmark, contentDescription = "שמורים")
+                            }
+                        },
+                        label = { Text("שמורים", fontSize = 11.sp) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = ScarletRed,
+                            selectedTextColor = ScarletRed,
+                            indicatorColor = ScarletRed.copy(alpha = 0.15f),
+                            unselectedIconColor = TextSecondary,
+                            unselectedTextColor = TextSecondary
+                        ),
+                        modifier = Modifier.testTag("nav_saved_tab")
+                    )
+
+                    NavigationBarItem(
+                        selected = currentTab == 2,
+                        onClick = { viewModel.onTabClicked(2) },
                         icon = {
                             if (activeDownloadsCount > 0) {
                                 BadgedBox(badge = { Badge { Text("$activeDownloadsCount") } }) {
@@ -232,10 +281,10 @@ fun MainAppScreen(viewModel: MainViewModel) {
                     )
 
                     NavigationBarItem(
-                        selected = currentTab == 2,
-                        onClick = { viewModel.onTabClicked(2) },
-                        icon = { Icon(Icons.Default.LibraryMusic, contentDescription = "ספרייה") },
-                        label = { Text("ספרייה", fontSize = 11.sp) },
+                        selected = currentTab == 3,
+                        onClick = { viewModel.onTabClicked(3) },
+                        icon = { Icon(Icons.Default.LibraryMusic, contentDescription = "קבצים") },
+                        label = { Text("קבצים", fontSize = 11.sp) },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = ScarletRed,
                             selectedTextColor = ScarletRed,
@@ -247,8 +296,8 @@ fun MainAppScreen(viewModel: MainViewModel) {
                     )
 
                     NavigationBarItem(
-                        selected = currentTab == 3,
-                        onClick = { viewModel.onTabClicked(3) },
+                        selected = currentTab == 4,
+                        onClick = { viewModel.onTabClicked(4) },
                         icon = { Icon(Icons.Default.Settings, contentDescription = "הגדרות") },
                         label = { Text("הגדרות", fontSize = 11.sp) },
                         colors = NavigationBarItemDefaults.colors(
@@ -288,14 +337,34 @@ fun MainAppScreen(viewModel: MainViewModel) {
                     onDownload = { item, quality -> viewModel.startDownload(item, applyTrim = false, quality = quality) },
                     onTrim = { viewModel.openTrimmerDialog(it) },
                     onDismissSuggestions = { viewModel.dismissSuggestions() },
-                    onLoadMore = { viewModel.loadMoreSearchResults() }
+                    onLoadMore = { viewModel.loadMoreSearchResults() },
+                    onOpenSavedContent = { viewModel.selectTab(1) }
                 )
-                1 -> DownloadsScreen(
+                1 -> SavedContentScreen(
+                    savedChannels = savedChannels,
+                    savedVideos = savedVideos,
+                    onBack = { viewModel.selectTab(0) },
+                    onToggleChannelNotification = { title, enabled -> viewModel.toggleChannelNotification(title, enabled) },
+                    onDeleteChannel = { title -> viewModel.deleteSavedChannel(title) },
+                    onDeleteVideo = { id -> viewModel.deleteSavedVideo(id) },
+                    onLoadChannelVideos = { ch -> viewModel.fetchChannelVideos(ch) },
+                    onDownloadVideo = { item, q -> viewModel.startDownload(item, applyTrim = false, quality = q) },
+                    onPlayVideo = { item ->
+                        val existing = tracks.firstOrNull { it.id == item.id }
+                        if (existing != null) {
+                            viewModel.playTrack(existing)
+                        } else {
+                            viewModel.startDownload(item, applyTrim = false, quality = null)
+                        }
+                    }
+                )
+                2 -> DownloadsScreen(
                     tasks = downloadTasks,
                     onCancelTask = { viewModel.downloadManager.cancelDownload(it) },
-                    onStopLiveRecording = { viewModel.downloadManager.stopLiveRecording(it) }
+                    onStopLiveRecording = { viewModel.downloadManager.stopLiveRecording(it) },
+                    onDownloadUrl = { viewModel.startDirectUrlDownload(it) }
                 )
-                2 -> LibraryScreen(
+                3 -> LibraryScreen(
                     tracks = tracks,
                     playlists = playlists,
                     downloadTasks = downloadTasks,
@@ -304,13 +373,17 @@ fun MainAppScreen(viewModel: MainViewModel) {
                     onCreatePlaylist = { viewModel.createPlaylist(it) },
                     onAddTrackToPlaylist = { plId, trId -> viewModel.addTrackToPlaylist(plId, trId) }
                 )
-                3 -> SettingsScreen(
+                4 -> SettingsScreen(
                     settings = settings,
                     onAllowCellularChanged = { viewModel.setAllowCellularDownloads(it) },
+                    onDarkModeChanged = { viewModel.setDarkMode(it) },
                     onAmoledChanged = { viewModel.setAmoledTheme(it) },
                     onQualityChanged = { viewModel.setAudioQuality(it) },
                     onEmbedCoverArtChanged = { viewModel.setAutoEmbedCoverArt(it) },
-                    onFolderChanged = { viewModel.setDownloadFolder(it) }
+                    onFolderChanged = { viewModel.setDownloadFolder(it) },
+                    onFolderUriChanged = { viewModel.setFolderUri(it) },
+                    onReminderChanged = { en, h, m, d -> viewModel.setVideoReminder(en, h, m, d) },
+                    onAutoDownloadChanged = { en, kw -> viewModel.setAutoDownloadSettings(en, kw) }
                 )
             }
         }
@@ -352,7 +425,29 @@ fun MainAppScreen(viewModel: MainViewModel) {
             onSetSpeed = { viewModel.setPlaybackSpeed(it) },
             onToggleRepeat = { viewModel.toggleRepeat() },
             onToggleShuffle = { viewModel.toggleShuffle() },
+            onClosePlayback = { viewModel.stopPlayback() },
             onDismiss = { viewModel.setFullPlayerOpen(false) }
+        )
+    }
+
+    if (isSavedContentOpen) {
+        SavedContentScreen(
+            savedChannels = savedChannels,
+            savedVideos = savedVideos,
+            onBack = { isSavedContentOpen = false },
+            onToggleChannelNotification = { title, enabled -> viewModel.toggleChannelNotification(title, enabled) },
+            onDeleteChannel = { title -> viewModel.deleteSavedChannel(title) },
+            onDeleteVideo = { id -> viewModel.deleteSavedVideo(id) },
+            onLoadChannelVideos = { ch -> viewModel.fetchChannelVideos(ch) },
+            onDownloadVideo = { item, q -> viewModel.startDownload(item, applyTrim = false, quality = q) },
+            onPlayVideo = { item ->
+                val existing = tracks.firstOrNull { it.id == item.id }
+                if (existing != null) {
+                    viewModel.playTrack(existing)
+                } else {
+                    viewModel.startDownload(item, applyTrim = false, quality = null)
+                }
+            }
         )
     }
 }

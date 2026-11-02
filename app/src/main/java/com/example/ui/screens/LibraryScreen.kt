@@ -67,6 +67,8 @@ import coil.compose.AsyncImage
 import com.example.data.local.PlaylistEntity
 import com.example.data.local.TrackEntity
 import com.example.data.model.DownloadTask
+import androidx.compose.foundation.border
+import com.example.ui.theme.BorderDark
 import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.ScarletRed
 import com.example.ui.theme.SurfaceCard
@@ -307,6 +309,7 @@ fun LibraryScreen(
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(SurfaceCard)
+                                .border(1.dp, BorderDark, RoundedCornerShape(12.dp))
                                 .padding(14.dp)
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -402,6 +405,7 @@ private fun TrackRowItem(
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(SurfaceCard)
+            .border(1.dp, BorderDark, RoundedCornerShape(12.dp))
             .clickable { onClick() }
             .padding(8.dp)
             .testTag("track_row_item")
@@ -433,6 +437,18 @@ private fun TrackRowItem(
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (track.isPartial) {
+                        Text(
+                            text = "חלקי",
+                            color = com.example.ui.theme.WarningAmber,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier
+                                .background(com.example.ui.theme.WarningAmber.copy(alpha = 0.15f), RoundedCornerShape(4.dp))
+                                .padding(horizontal = 4.dp, vertical = 1.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
                     Text(
                         text = track.artist,
                         color = TextSecondary,

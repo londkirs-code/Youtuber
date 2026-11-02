@@ -110,8 +110,55 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _trimEndMs = MutableStateFlow(0L)
     val trimEndMs: StateFlow<Long> = _trimEndMs.asStateFlow()
 
-    // User Settings
-    private val _settings = MutableStateFlow(UserSettings())
+    // User Settings persistence
+    private val prefs = application.getSharedPreferences("youtuber_user_settings", Context.MODE_PRIVATE)
+
+    private fun loadSettings(): UserSettings {
+        val dark = prefs.getBoolean("is_dark", true)
+        val amoled = prefs.getBoolean("is_amoled", false)
+        val cellular = prefs.getBoolean("allow_cellular", true)
+        val coverArt = prefs.getBoolean("auto_embed_cover", true)
+        val folder = prefs.getString("download_folder", "תיקיית המוזיקה (Music/TuneVault)") ?: "תיקיית המוזיקה (Music/TuneVault)"
+        val folderUri = prefs.getString("download_folder_uri", "") ?: ""
+        val reminder = prefs.getBoolean("reminder_enabled", false)
+        val reminderH = prefs.getInt("reminder_hour", 20)
+        val reminderM = prefs.getInt("reminder_min", 0)
+        val autoDl = prefs.getBoolean("auto_dl_enabled", false)
+        val autoKw = prefs.getString("auto_dl_keyword", "") ?: ""
+        return UserSettings(
+            allowCellularDownloads = cellular,
+            isDarkMode = dark,
+            isAmoledTheme = amoled,
+            autoEmbedCoverArt = coverArt,
+            downloadFolderPath = folder,
+            downloadFolderUri = folderUri,
+            videoReminderEnabled = reminder,
+            reminderHour = reminderH,
+            reminderMinute = reminderM,
+            autoDownloadEnabled = autoDl,
+            autoDownloadKeyword = autoKw
+        )
+    }
+
+    private fun updateAndPersistSettings(transform: (UserSettings) -> UserSettings) {
+        val updated = transform(_settings.value)
+        _settings.value = updated
+        prefs.edit()
+            .putBoolean("is_dark", updated.isDarkMode)
+            .putBoolean("is_amoled", updated.isAmoledTheme)
+            .putBoolean("allow_cellular", updated.allowCellularDownloads)
+            .putBoolean("auto_embed_cover", updated.autoEmbedCoverArt)
+            .putString("download_folder", updated.downloadFolderPath)
+            .putString("download_folder_uri", updated.downloadFolderUri)
+            .putBoolean("reminder_enabled", updated.videoReminderEnabled)
+            .putInt("reminder_hour", updated.reminderHour)
+            .putInt("reminder_min", updated.reminderMinute)
+            .putBoolean("auto_dl_enabled", updated.autoDownloadEnabled)
+            .putString("auto_dl_keyword", updated.autoDownloadKeyword)
+            .apply()
+    }
+
+    private val _settings = MutableStateFlow(loadSettings())
     val settings: StateFlow<UserSettings> = _settings.asStateFlow()
 
     // Room Database Flows
@@ -331,6 +378,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun toggleChannelNotification(channelTitle: String, enabled: Boolean) {
+        viewModelScope.launch {
+            database.savedMediaDao().setChannelNotify(channelTitle, enabled)
+        }
+    }
+
+    fun deleteSavedChannel(channelTitle: String) {
+        viewModelScope.launch {
+            database.savedMediaDao().deleteSavedChannel(channelTitle)
+        }
+    }
+
+    fun deleteSavedVideo(videoId: String) {
+        viewModelScope.launch {
+            database.savedMediaDao().deleteSavedVideo(videoId)
+        }
+    }
+
+    suspend fun fetchChannelVideos(channel: SavedChannelEntity): List<SearchResultItem> {
+        return withContext(Dispatchers.IO) {
+            var channelId = channel.channelId
+            if (channelId.isBlank() && channel.seedVideoId.isNotBlank()) {
+                channelId = YouTubeEngine.resolveChannelIdFromVideo(channel.seedVideoId).orEmpty()
+                if (channelId.isNotBlank()) {
+                    database.savedMediaDao().updateChannelId(channel.channelTitle, channelId)
+                }
+            }
+            YouTubeEngine.getChannelVideosNewestFirst(channelId, channel.channelTitle)
+        }
+    }
+
     fun clearSearch() {
         _searchQuery.value = ""
         _searchSuggestions.value = emptyList()
@@ -438,25 +516,79 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _isFullPlayerOpen.value = open
     }
 
+    fun stopPlayback() {
+        playerService?.stopPlayback()
+        _isFullPlayerOpen.value = false
+        _currentTrack.value = null
+        _isPlaying.value = false
+    }
+
     // Settings actions
     fun setAllowCellularDownloads(allow: Boolean) {
-        _settings.value = _settings.value.copy(allowCellularDownloads = allow)
+        updateAndPersistSettings { it.copy(allowCellularDownloads = allow) }
+    }
+
+    fun setDarkMode(isDark: Boolean) {
+        updateAndPersistSettings { it.copy(isDarkMode = isDark) }
     }
 
     fun setAmoledTheme(isAmoled: Boolean) {
-        _settings.value = _settings.value.copy(isAmoledTheme = isAmoled)
+        updateAndPersistSettings { it.copy(isAmoledTheme = isAmoled) }
     }
 
     fun setAudioQuality(quality: AudioQuality) {
-        _settings.value = _settings.value.copy(audioQuality = quality)
+        updateAndPersistSettings { it.copy(audioQuality = quality) }
     }
 
     fun setAutoEmbedCoverArt(embed: Boolean) {
-        _settings.value = _settings.value.copy(autoEmbedCoverArt = embed)
+        updateAndPersistSettings { it.copy(autoEmbedCoverArt = embed) }
     }
 
     fun setDownloadFolder(path: String) {
-        _settings.value = _settings.value.copy(downloadFolderPath = path)
+        updateAndPersistSettings { it.copy(downloadFolderPath = path) }
+    }
+
+    fun setFolderUri(uri: String) {
+        updateAndPersistSettings { it.copy(downloadFolderUri = uri) }
+    }
+
+    fun setVideoReminder(enabled: Boolean, hour: Int, minute: Int, days: List<Int>) {
+        updateAndPersistSettings {
+            it.copy(
+                videoReminderEnabled = enabled,
+                reminderHour = hour,
+                reminderMinute = minute,
+                reminderDays = days
+            )
+        }
+    }
+
+    fun setAutoDownloadSettings(enabled: Boolean, keyword: String) {
+        updateAndPersistSettings {
+            it.copy(
+                autoDownloadEnabled = enabled,
+                autoDownloadKeyword = keyword
+            )
+        }
+    }
+
+    fun startDirectUrlDownload(url: String) {
+        val trimmed = url.trim()
+        if (trimmed.isBlank()) return
+        val id = YouTubeEngine.extractVideoId(trimmed) ?: System.currentTimeMillis().toString()
+        val item = SearchResultItem(
+            id = id,
+            title = "הורדה ישירה $id",
+            channelTitle = "YouTube",
+            durationText = "",
+            durationMs = 0L,
+            thumbnailUrl = "https://img.youtube.com/vi/$id/hqdefault.jpg",
+            viewsText = "",
+            uploadedText = "",
+            isLive = false
+        )
+        startDownload(item, applyTrim = false, quality = null)
+        _currentTab.value = 2 // Tab index for Downloads
     }
 
     fun deleteTrack(track: TrackEntity) {

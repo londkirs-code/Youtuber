@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -48,6 +49,11 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.Image
+import androidx.compose.ui.res.painterResource
+import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Contrast
+import com.example.R
 import com.example.BuildConfig
 import com.example.data.model.AudioQuality
 import com.example.data.model.UserSettings
@@ -59,18 +65,38 @@ import com.example.ui.theme.SurfaceDark
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material.icons.filled.Alarm
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+
 @Composable
 fun SettingsScreen(
     settings: UserSettings,
     onAllowCellularChanged: (Boolean) -> Unit,
+    onDarkModeChanged: (Boolean) -> Unit = {},
     onAmoledChanged: (Boolean) -> Unit,
     onQualityChanged: (AudioQuality) -> Unit,
     onEmbedCoverArtChanged: (Boolean) -> Unit,
     onFolderChanged: (String) -> Unit = {},
+    onFolderUriChanged: (String) -> Unit = {},
+    onReminderChanged: (enabled: Boolean, hour: Int, minute: Int, days: List<Int>) -> Unit = { _, _, _, _ -> },
+    onAutoDownloadChanged: (enabled: Boolean, keyword: String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     var isFolderDialogOpen by remember { mutableStateOf(false) }
     var folderInput by remember { mutableStateOf(settings.downloadFolderPath) }
+
+    val openFolderTreeLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            onFolderUriChanged(uri.toString())
+        }
+    }
 
     Column(
         modifier = modifier
@@ -100,6 +126,7 @@ fun SettingsScreen(
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = SurfaceCard),
+            border = BorderStroke(1.dp, BorderDark),
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(modifier = Modifier.padding(14.dp)) {
@@ -143,46 +170,44 @@ fun SettingsScreen(
                 HorizontalDivider(color = BorderDark)
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Custom Download Folder (Requirement 7)
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable {
-                            folderInput = settings.downloadFolderPath
-                            isFolderDialogOpen = true
-                        }
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Folder,
-                        contentDescription = null,
-                        tint = ScarletRed,
-                        modifier = Modifier.size(24.dp)
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "מיקום שמירת ההורדות",
-                            color = TextPrimary,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                        Text(
-                            text = settings.downloadFolderPath,
-                            color = NeonCyan,
-                            fontSize = 11.sp
-                        )
-                    }
-                    Button(
-                        onClick = {
-                            folderInput = settings.downloadFolderPath
-                            isFolderDialogOpen = true
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = SurfaceDark),
-                        shape = RoundedCornerShape(10.dp)
+                // Real Folder Picker & Custom Folder
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("שנה", color = TextPrimary, fontSize = 11.sp)
+                        Icon(
+                            imageVector = Icons.Default.FolderOpen,
+                            contentDescription = null,
+                            tint = ScarletRed,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "מיקום שמירת ההורדות",
+                                color = TextPrimary,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            val displayPath = if (settings.downloadFolderUri.isNotBlank()) {
+                                "תיקייה נבחרה במכשיר: ${settings.downloadFolderUri.substringAfterLast("%2F").substringAfterLast("%3A")}"
+                            } else {
+                                settings.downloadFolderPath
+                            }
+                            Text(
+                                text = displayPath,
+                                color = NeonCyan,
+                                fontSize = 11.sp
+                            )
+                        }
+                        Button(
+                            onClick = { openFolderTreeLauncher.launch(null) },
+                            colors = ButtonDefaults.buttonColors(containerColor = ScarletRed),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("בחר תיקייה", color = androidx.compose.ui.graphics.Color.White, fontSize = 11.sp)
+                        }
                     }
                 }
 
@@ -230,19 +255,21 @@ fun SettingsScreen(
         Spacer(modifier = Modifier.height(16.dp))
 
         // SECTION: Appearance
-        SectionHeader("מראה ותצוגה")
+        SectionHeader("מראה וערכת נושא")
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = SurfaceCard),
+            border = BorderStroke(1.dp, BorderDark),
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(modifier = Modifier.padding(14.dp)) {
+                // Day / Night Switch
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Icon(
-                        imageVector = Icons.Default.DarkMode,
+                        imageVector = if (settings.isDarkMode) Icons.Default.DarkMode else Icons.Default.LightMode,
                         contentDescription = null,
                         tint = ScarletRed,
                         modifier = Modifier.size(24.dp)
@@ -250,25 +277,67 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "שחור מוחלט (AMOLED Pure Black)",
+                            text = if (settings.isDarkMode) "מצב לילה (כהה)" else "מצב יום (בהיר)",
                             color = TextPrimary,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Medium
                         )
                         Text(
-                            text = "חיסכון מקסימלי בסוללה במסכי OLED",
+                            text = if (settings.isDarkMode) "ערכת נושא כהה ונוחה לעיניים" else "ערכת נושא בהירה ונקייה לשימוש באור יום",
                             color = TextSecondary,
                             fontSize = 11.sp
                         )
                     }
                     Switch(
-                        checked = settings.isAmoledTheme,
-                        onCheckedChange = onAmoledChanged,
+                        checked = settings.isDarkMode,
+                        onCheckedChange = onDarkModeChanged,
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = ScarletRed,
                             checkedTrackColor = ScarletRed.copy(alpha = 0.4f)
-                        )
+                        ),
+                        modifier = Modifier.testTag("dark_mode_switch")
                     )
+                }
+
+                if (settings.isDarkMode) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    HorizontalDivider(color = BorderDark)
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // AMOLED switch
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Contrast,
+                            contentDescription = null,
+                            tint = NeonCyan,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "שחור מוחלט (AMOLED Pure Black)",
+                                color = TextPrimary,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "חיסכון מקסימלי בסוללה במסכי OLED",
+                                color = TextSecondary,
+                                fontSize = 11.sp
+                            )
+                        }
+                        Switch(
+                            checked = settings.isAmoledTheme,
+                            onCheckedChange = onAmoledChanged,
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = ScarletRed,
+                                checkedTrackColor = ScarletRed.copy(alpha = 0.4f)
+                            )
+                        )
+                    }
                 }
             }
         }
@@ -280,6 +349,7 @@ fun SettingsScreen(
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = SurfaceCard),
+            border = BorderStroke(1.dp, BorderDark),
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(modifier = Modifier.padding(6.dp)) {
@@ -305,6 +375,198 @@ fun SettingsScreen(
             }
         }
 
+        // SECTION: Smart Reminders & Auto Download
+        SectionHeader("תזכורות חכמות והורדה אוטומטית")
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = SurfaceCard),
+            border = BorderStroke(1.dp, BorderDark),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(14.dp)) {
+                // Reminder alarm toggle
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Alarm,
+                        contentDescription = null,
+                        tint = ScarletRed,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "תזכורת קבועה לצפייה בסרטון (שעון מעורר)",
+                            color = TextPrimary,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = "התראה בשעה ובימים הנבחרים לצפייה והאזנה",
+                            color = TextSecondary,
+                            fontSize = 11.sp
+                        )
+                    }
+                    Switch(
+                        checked = settings.videoReminderEnabled,
+                        onCheckedChange = {
+                            onReminderChanged(it, settings.reminderHour, settings.reminderMinute, settings.reminderDays)
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = ScarletRed,
+                            checkedTrackColor = ScarletRed.copy(alpha = 0.4f)
+                        )
+                    )
+                }
+
+                if (settings.videoReminderEnabled) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    // Time selector
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(SurfaceDark, RoundedCornerShape(10.dp))
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                    ) {
+                        Text(
+                            text = "שעת התזכורת:",
+                            color = TextPrimary,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Button(
+                                onClick = {
+                                    val newHour = if (settings.reminderHour - 1 < 0) 23 else settings.reminderHour - 1
+                                    onReminderChanged(true, newHour, settings.reminderMinute, settings.reminderDays)
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = SurfaceCard),
+                                modifier = Modifier.size(32.dp),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                            ) {
+                                Text("-", color = TextPrimary, fontSize = 16.sp)
+                            }
+                            Text(
+                                text = String.format("%02d:%02d", settings.reminderHour, settings.reminderMinute),
+                                color = NeonCyan,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 12.dp)
+                            )
+                            Button(
+                                onClick = {
+                                    val newHour = (settings.reminderHour + 1) % 24
+                                    onReminderChanged(true, newHour, settings.reminderMinute, settings.reminderDays)
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = SurfaceCard),
+                                modifier = Modifier.size(32.dp),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                            ) {
+                                Text("+", color = TextPrimary, fontSize = 16.sp)
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "ימים בשבוע:",
+                        color = TextSecondary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    val dayNames = listOf("א'", "ב'", "ג'", "ד'", "ה'", "ו'", "ש'")
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        dayNames.forEachIndexed { idx, name ->
+                            val dayNum = idx + 1
+                            val isSelected = settings.reminderDays.contains(dayNum)
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = {
+                                    val newDays = if (isSelected) {
+                                        settings.reminderDays.filter { it != dayNum }
+                                    } else {
+                                        settings.reminderDays + dayNum
+                                    }
+                                    onReminderChanged(true, settings.reminderHour, settings.reminderMinute, newDays)
+                                },
+                                label = { Text(name, fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = ScarletRed,
+                                    selectedLabelColor = androidx.compose.ui.graphics.Color.White
+                                )
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+                HorizontalDivider(color = BorderDark)
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Smart Auto Download toggle & keyword input
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.AutoAwesome,
+                        contentDescription = null,
+                        tint = NeonCyan,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "מנגנון הורדה אוטומטית חכם",
+                            color = TextPrimary,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = "מוריד אוטומטית ברקע סרטונים חדשים בערוצים השמורים לפי מילת מפתח",
+                            color = TextSecondary,
+                            fontSize = 11.sp
+                        )
+                    }
+                    Switch(
+                        checked = settings.autoDownloadEnabled,
+                        onCheckedChange = {
+                            onAutoDownloadChanged(it, settings.autoDownloadKeyword)
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = ScarletRed,
+                            checkedTrackColor = ScarletRed.copy(alpha = 0.4f)
+                        )
+                    )
+                }
+
+                if (settings.autoDownloadEnabled) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "מילת מפתח בתחילת הכותרת להורדה:",
+                        color = TextSecondary,
+                        fontSize = 12.sp
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    OutlinedTextField(
+                        value = settings.autoDownloadKeyword,
+                        onValueChange = { onAutoDownloadChanged(true, it) },
+                        placeholder = { Text("למשל: שיעור, פרק, פודקאסט", color = TextSecondary, fontSize = 12.sp) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        }
+
         Spacer(modifier = Modifier.height(16.dp))
 
         // Developer diagnostics and engine test bench
@@ -317,17 +579,27 @@ fun SettingsScreen(
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = SurfaceCard),
+            border = BorderStroke(1.dp, BorderDark),
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(modifier = Modifier.padding(14.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Info, contentDescription = null, tint = NeonCyan, modifier = Modifier.size(20.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("YouTube v${BuildConfig.VERSION_NAME} • מנוע yt-dlp", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Image(
+                        painter = painterResource(R.drawable.ic_youtuber_logo),
+                        contentDescription = "Youtuber Logo",
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Text("Youtuber v${BuildConfig.VERSION_NAME}", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Text("מנוע yt-dlp עדכני וחזק", color = NeonCyan, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                    }
                 }
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "אפליקציה מהירה, חלקה וקלת משקל להורדת קבצים, פודקאסטים וסרטונים מיוטיוב והשמעה ברקע דרך ההתראות.",
+                    text = "אפליקציה מהירה, חלקה וקלת משקל להורדת קבצים, פודקאסטים וסרטונים מיוטיוב והשמעה ברקע דרך ההתראות במצב יום ולילה.",
                     color = TextSecondary,
                     fontSize = 11.sp,
                     lineHeight = 16.sp

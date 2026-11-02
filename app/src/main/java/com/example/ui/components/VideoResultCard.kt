@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FiberManualRecord
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -41,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.data.model.SearchResultItem
+import com.example.ui.theme.BorderDark
 import com.example.ui.theme.LiveBadgeColor
 import com.example.ui.theme.ScarletRed
 import com.example.ui.theme.SurfaceCard
@@ -64,11 +66,12 @@ fun VideoResultCard(
     modifier: Modifier = Modifier
 ) {
     Card(
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = SurfaceCard),
+        border = BorderStroke(1.dp, BorderDark),
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(14.dp))
             .clickable { onClick() }
             .testTag("video_result_card")
     ) {
@@ -76,13 +79,13 @@ fun VideoResultCard(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(8.dp)
+                .padding(10.dp)
         ) {
-            // Compact 16:9 Thumbnail with Duration/Live Badge (Half the previous height!)
+            // 16:9 Thumbnail slightly enlarged for comfortable viewing
             Box(
                 modifier = Modifier
-                    .size(width = 110.dp, height = 64.dp)
-                    .clip(RoundedCornerShape(8.dp))
+                    .size(width = 120.dp, height = 72.dp)
+                    .clip(RoundedCornerShape(10.dp))
                     .background(SurfaceDark)
             ) {
                 AsyncImage(
@@ -98,8 +101,8 @@ fun VideoResultCard(
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
                             .padding(4.dp)
-                            .background(LiveBadgeColor, RoundedCornerShape(3.dp))
-                            .padding(horizontal = 4.dp, vertical = 1.dp)
+                            .background(LiveBadgeColor, RoundedCornerShape(4.dp))
+                            .padding(horizontal = 5.dp, vertical = 2.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.FiberManualRecord,
@@ -111,7 +114,7 @@ fun VideoResultCard(
                         Text(
                             text = "LIVE",
                             color = Color.White,
-                            fontSize = 9.sp,
+                            fontSize = 10.sp,
                             fontWeight = FontWeight.Bold
                         )
                     }
@@ -120,8 +123,8 @@ fun VideoResultCard(
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
                             .padding(4.dp)
-                            .background(Color.Black.copy(alpha = 0.8f), RoundedCornerShape(3.dp))
-                            .padding(horizontal = 4.dp, vertical = 1.dp)
+                            .background(Color.Black.copy(alpha = 0.82f), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 5.dp, vertical = 2.dp)
                     ) {
                         Text(
                             text = item.durationText,
@@ -133,9 +136,9 @@ fun VideoResultCard(
                 }
             }
 
-            Spacer(modifier = Modifier.width(10.dp))
+            Spacer(modifier = Modifier.width(12.dp))
 
-            // Metadata: Title, Channel, Views
+            // Metadata: Title, Channel, Views & Upload Time
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.Center
@@ -143,77 +146,98 @@ fun VideoResultCard(
                 Text(
                     text = item.title,
                     color = TextPrimary,
-                    fontSize = 13.sp,
+                    fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
-                    lineHeight = 17.sp
+                    lineHeight = 18.sp
                 )
                 Spacer(modifier = Modifier.height(3.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = item.channelTitle,
                         color = TextSecondary,
-                        fontSize = 11.sp,
+                        fontSize = 12.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false)
                     )
-                    if (item.viewsText.isNotBlank()) {
-                        Spacer(modifier = Modifier.width(4.dp))
+                }
+                // Upload date / time ago + views
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(top = 2.dp)
+                ) {
+                    if (item.uploadedText.isNotBlank()) {
                         Text(
-                            text = "• ${item.viewsText}",
+                            text = item.uploadedText,
+                            color = TextSecondary,
+                            fontSize = 11.sp
+                        )
+                        if (item.viewsText.isNotBlank()) {
+                            Text(
+                                text = " • ",
+                                color = TextTertiary,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                    if (item.viewsText.isNotBlank()) {
+                        Text(
+                            text = item.viewsText,
                             color = TextTertiary,
-                            fontSize = 10.sp
+                            fontSize = 11.sp
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.width(6.dp))
+            Spacer(modifier = Modifier.width(8.dp))
 
-            // Action Buttons: Copy, Share, Download (Compact icons)
+            // Action Buttons: Copy, Share, and Large Download Button
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(2.dp)
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 IconButton(
                     onClick = onCopyUrl,
-                    modifier = Modifier.size(32.dp)
+                    modifier = Modifier.size(34.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.ContentCopy,
                         contentDescription = "העתק קישור",
-                        tint = TextTertiary,
-                        modifier = Modifier.size(16.dp)
+                        tint = TextSecondary,
+                        modifier = Modifier.size(17.dp)
                     )
                 }
 
                 IconButton(
                     onClick = onShareUrl,
-                    modifier = Modifier.size(32.dp)
+                    modifier = Modifier.size(34.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Share,
                         contentDescription = "שתף קישור",
-                        tint = TextTertiary,
-                        modifier = Modifier.size(16.dp)
+                        tint = TextSecondary,
+                        modifier = Modifier.size(17.dp)
                     )
                 }
 
+                // Large Distinct Download Button
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .size(32.dp)
+                        .size(40.dp)
                         .clip(CircleShape)
                         .background(ScarletRed)
                         .clickable { onDownload() }
+                        .testTag("download_video_btn")
                 ) {
                     Icon(
                         imageVector = Icons.Default.Download,
-                        contentDescription = "הורד",
+                        contentDescription = "הורד שמע",
                         tint = Color.White,
-                        modifier = Modifier.size(17.dp)
+                        modifier = Modifier.size(22.dp)
                     )
                 }
             }

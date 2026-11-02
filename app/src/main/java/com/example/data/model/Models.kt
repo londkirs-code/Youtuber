@@ -59,13 +59,21 @@ enum class AudioQuality(val labelHebrew: String, val bitrateText: String) {
 
 data class UserSettings(
     val allowCellularDownloads: Boolean = true,
-    val isAmoledTheme: Boolean = true,
+    val isDarkMode: Boolean = true,
+    val isAmoledTheme: Boolean = false,
     val audioQuality: AudioQuality = AudioQuality.BEST,
     val autoEmbedCoverArt: Boolean = true,
     val defaultPlaybackSpeed: Float = 1.0f,
     val bufferSizeMs: Int = 2000,
     val autoSaveToMusicDir: Boolean = true,
-    val downloadFolderPath: String = "תיקיית המוזיקה (Music/TuneVault)"
+    val downloadFolderPath: String = "תיקיית המוזיקה (Music/TuneVault)",
+    val downloadFolderUri: String = "",
+    val videoReminderEnabled: Boolean = false,
+    val reminderHour: Int = 20,
+    val reminderMinute: Int = 0,
+    val reminderDays: List<Int> = listOf(1, 2, 3, 4, 5, 6, 7),
+    val autoDownloadEnabled: Boolean = false,
+    val autoDownloadKeyword: String = ""
 )
 
 enum class RepeatMode {

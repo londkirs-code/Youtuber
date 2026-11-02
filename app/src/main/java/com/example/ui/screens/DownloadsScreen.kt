@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -36,15 +37,37 @@ import com.example.ui.theme.ScarletRed
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalClipboardManager
+import com.example.ui.theme.BorderDark
+import com.example.ui.theme.SurfaceDark
+
 @Composable
 fun DownloadsScreen(
     tasks: List<DownloadTask>,
     onCancelTask: (String) -> Unit,
     onStopLiveRecording: (String) -> Unit,
+    onDownloadUrl: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val activeTasks = tasks.filter { it.status != DownloadStatus.COMPLETED && it.status != DownloadStatus.FAILED }
     val completedTasks = tasks.filter { it.status == DownloadStatus.COMPLETED }
+    var directUrl by remember { mutableStateOf("") }
+    val clipboardManager = LocalClipboardManager.current
 
     Column(
         modifier = modifier
@@ -57,7 +80,7 @@ fun DownloadsScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 8.dp)
+                .padding(vertical = 4.dp)
         ) {
             Text(
                 text = "תור הורדות קבצים",
@@ -86,7 +109,88 @@ fun DownloadsScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(6.dp))
+
+        // Direct URL download input bar
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp)
+        ) {
+            OutlinedTextField(
+                value = directUrl,
+                onValueChange = { directUrl = it },
+                placeholder = {
+                    Text("הדבק קישור להורדה מיידית...", color = TextSecondary, fontSize = 12.sp)
+                },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Default.Link,
+                        contentDescription = null,
+                        tint = ScarletRed,
+                        modifier = Modifier.size(20.dp)
+                    )
+                },
+                trailingIcon = {
+                    IconButton(
+                        onClick = {
+                            val clip = clipboardManager.getText()?.text.orEmpty()
+                            if (clip.isNotBlank()) directUrl = clip.trim()
+                        },
+                        modifier = Modifier.size(36.dp).testTag("direct_url_paste_btn")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ContentPaste,
+                            contentDescription = "הדבק",
+                            tint = NeonCyan,
+                            modifier = Modifier.size(19.dp)
+                        )
+                    }
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = ScarletRed,
+                    unfocusedBorderColor = BorderDark,
+                    focusedTextColor = TextPrimary,
+                    unfocusedTextColor = TextPrimary,
+                    focusedContainerColor = SurfaceDark,
+                    unfocusedContainerColor = SurfaceDark
+                ),
+                modifier = Modifier
+                    .weight(1f)
+                    .height(52.dp)
+                    .testTag("direct_url_input")
+            )
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            Button(
+                onClick = {
+                    if (directUrl.isNotBlank()) {
+                        onDownloadUrl(directUrl.trim())
+                        directUrl = ""
+                    }
+                },
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = ScarletRed),
+                modifier = Modifier
+                    .height(52.dp)
+                    .testTag("direct_url_download_btn")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Download,
+                    contentDescription = "הורד",
+                    tint = androidx.compose.ui.graphics.Color.White,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("הורד", color = androidx.compose.ui.graphics.Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
 
         if (tasks.isEmpty()) {
             Box(

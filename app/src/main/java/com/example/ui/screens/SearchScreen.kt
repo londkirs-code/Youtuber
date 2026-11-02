@@ -3,6 +3,8 @@ package com.example.ui.screens
 import android.content.Intent
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.Image
+import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -61,6 +63,11 @@ import com.example.data.model.SearchResultItem
 import com.example.ui.components.VideoDetailDialog
 import com.example.ui.components.VideoResultCard
 import com.example.ui.components.YouTubeSearchBar
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.TextButton
+import com.example.ui.theme.BorderDark
 import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.ScarletRed
 import com.example.ui.theme.SurfaceCard
@@ -92,6 +99,7 @@ fun SearchScreen(
     onTrim: (SearchResultItem) -> Unit,
     onDismissSuggestions: () -> Unit = {},
     onLoadMore: () -> Unit = {},
+    onOpenSavedContent: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -133,6 +141,56 @@ fun SearchScreen(
                 .fillMaxSize()
                 .padding(horizontal = 14.dp, vertical = 6.dp)
         ) {
+            // Top Branding & Saved Content button
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 6.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Image(
+                        painter = painterResource(com.example.R.drawable.ic_youtuber_logo),
+                        contentDescription = "Youtuber Logo",
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Youtuber",
+                        color = TextPrimary,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                // Dedicated button to open Saved Content management
+                Button(
+                    onClick = onOpenSavedContent,
+                    colors = ButtonDefaults.buttonColors(containerColor = SurfaceCard),
+                    border = BorderStroke(1.dp, BorderDark),
+                    shape = RoundedCornerShape(20.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                    modifier = Modifier.testTag("open_saved_content_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Bookmark,
+                        contentDescription = null,
+                        tint = WarningAmber,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "שמורים (${savedChannels.size + savedVideos.size})",
+                        color = TextPrimary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+
             YouTubeSearchBar(
                 query = searchQuery,
                 onQueryChanged = onQueryChanged,
@@ -223,16 +281,22 @@ fun SearchScreen(
                             Column {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Icon(Icons.Default.Star, contentDescription = null, tint = WarningAmber, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "ערוצים שמורים (${savedChannels.size})",
-                                        color = TextPrimary,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.Star, contentDescription = null, tint = WarningAmber, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "ערוצים שמורים (${savedChannels.size})",
+                                            color = TextPrimary,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                    TextButton(onClick = onOpenSavedContent) {
+                                        Text("נהל הכל", color = NeonCyan, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    }
                                 }
                                 Spacer(modifier = Modifier.height(6.dp))
                                 LazyRow(
@@ -321,17 +385,18 @@ fun SearchScreen(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     modifier = Modifier.padding(horizontal = 24.dp)
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.MusicNote,
-                                        contentDescription = null,
-                                        tint = ScarletRed.copy(alpha = 0.6f),
-                                        modifier = Modifier.size(52.dp)
+                                    Image(
+                                        painter = painterResource(com.example.R.drawable.ic_youtuber_logo),
+                                        contentDescription = "Youtuber Logo",
+                                        modifier = Modifier
+                                            .size(72.dp)
+                                            .clip(RoundedCornerShape(14.dp))
                                     )
                                     Spacer(modifier = Modifier.height(14.dp))
                                     Text(
-                                        text = "חיפוש יוטיוב מובנה",
+                                        text = "חיפוש Youtuber מובנה",
                                         color = TextPrimary,
-                                        fontSize = 17.sp,
+                                        fontSize = 18.sp,
                                         fontWeight = FontWeight.Bold
                                     )
                                     Spacer(modifier = Modifier.height(6.dp))

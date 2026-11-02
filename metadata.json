@@ -1,6 +1,6 @@
 {
-  "name": "YouTube",
-  "description": "YouTube Audio Downloader and Background Music Player based on yt-dlp",
+  "name": "Youtuber",
+  "description": "Youtuber Audio Downloader and Background Music Player based on yt-dlp",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

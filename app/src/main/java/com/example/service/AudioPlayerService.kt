@@ -161,6 +161,7 @@ class AudioPlayerService : Service() {
                     _isPlaying.value = true
                     _durationMs.value = mp.duration.toLong()
                     startPositionTracker()
+                    updateMediaMetadata(track, _durationMs.value, currentCoverBitmap)
                     updateMediaSessionState(PlaybackState.STATE_PLAYING)
                     loadArtworkAndShowNotification(track)
                 }
@@ -325,11 +326,24 @@ class AudioPlayerService : Service() {
                 PlaybackState.ACTION_SKIP_TO_PREVIOUS or
                 PlaybackState.ACTION_FAST_FORWARD or
                 PlaybackState.ACTION_REWIND or
-                PlaybackState.ACTION_SEEK_TO
+                PlaybackState.ACTION_SEEK_TO or
+                PlaybackState.ACTION_STOP
             )
             .setState(state, _currentPositionMs.value, _playbackSpeed.value)
             .build()
         mediaSession?.setPlaybackState(playbackState)
+    }
+
+    private fun updateMediaMetadata(track: TrackEntity, durationMs: Long, cover: Bitmap?) {
+        val metaBuilder = android.media.MediaMetadata.Builder()
+            .putString(android.media.MediaMetadata.METADATA_KEY_TITLE, track.title)
+            .putString(android.media.MediaMetadata.METADATA_KEY_ARTIST, track.artist)
+            .putLong(android.media.MediaMetadata.METADATA_KEY_DURATION, durationMs)
+        if (cover != null) {
+            metaBuilder.putBitmap(android.media.MediaMetadata.METADATA_KEY_ALBUM_ART, cover)
+            metaBuilder.putBitmap(android.media.MediaMetadata.METADATA_KEY_ART, cover)
+        }
+        mediaSession?.setMetadata(metaBuilder.build())
     }
 
     private fun loadArtworkAndShowNotification(track: TrackEntity) {
@@ -344,6 +358,7 @@ class AudioPlayerService : Service() {
                     null
                 }
             }
+            updateMediaMetadata(track, _durationMs.value, currentCoverBitmap)
             updateNotification(track)
         }
     }
@@ -423,7 +438,7 @@ class AudioPlayerService : Service() {
         val builder = Notification.Builder(this, CHANNEL_ID)
             .setContentTitle(track.title)
             .setContentText(track.artist)
-            .setSubText("YouTube • ${(track.durationMs / 60000)}:${((track.durationMs % 60000) / 1000).toString().padStart(2, '0')}")
+            .setSubText("Youtuber • ${(track.durationMs / 60000)}:${((track.durationMs % 60000) / 1000).toString().padStart(2, '0')}")
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentIntent(contentIntent)
             .setOngoing(_isPlaying.value)
@@ -452,7 +467,7 @@ class AudioPlayerService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "נגן מוזיקה TuneVault",
+                "נגן שמע Youtuber",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = "השמעת שמע והודעות שליטה ברקע"
@@ -463,13 +478,22 @@ class AudioPlayerService : Service() {
         }
     }
 
-    private fun stopPlayback() {
+    fun stopPlayback() {
         positionTrackerJob?.cancel()
-        mediaPlayer?.stop()
-        mediaPlayer?.release()
+        try {
+            mediaPlayer?.stop()
+            mediaPlayer?.release()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error stopping mediaPlayer", e)
+        }
         mediaPlayer = null
         _isPlaying.value = false
+        _currentTrack.value = null
+        _currentPositionMs.value = 0L
+        updateMediaSessionState(PlaybackState.STATE_STOPPED)
         stopForeground(STOP_FOREGROUND_REMOVE)
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        nm?.cancel(NOTIFICATION_ID)
         stopSelf()
     }
 

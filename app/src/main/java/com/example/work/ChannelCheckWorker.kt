@@ -45,11 +45,30 @@ class ChannelCheckWorker(ctx: Context, params: WorkerParameters) : CoroutineWork
                 val fresh = feed.takeWhile { it.videoId != ch.lastSeenVideoId }
                 if (fresh.isEmpty()) continue
 
+                val prefs = applicationContext.getSharedPreferences("youtuber_user_settings", Context.MODE_PRIVATE)
+                val autoDownloadEnabled = prefs.getBoolean("auto_dl_enabled", false)
+                val autoDownloadKeyword = prefs.getString("auto_dl_keyword", "").orEmpty().trim()
+
                 fresh.take(3).reversed().forEach { v ->
-                    Notifier.newVideo(
-                        applicationContext, v.videoId, v.title, ch.channelTitle,
-                        "https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg"
-                    )
+                    val isKeywordMatch = autoDownloadEnabled && autoDownloadKeyword.isNotBlank() &&
+                        v.title.contains(autoDownloadKeyword, ignoreCase = true)
+
+                    if (isKeywordMatch) {
+                        (applicationContext as? com.example.App)?.downloadManager?.startDownload(
+                            videoId = v.videoId,
+                            title = v.title,
+                            channel = ch.channelTitle,
+                            thumbnailUrl = "https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg",
+                            isLive = false,
+                            trimRange = null,
+                            settings = com.example.data.model.UserSettings()
+                        )
+                    } else {
+                        Notifier.newVideo(
+                            applicationContext, v.videoId, v.title, ch.channelTitle,
+                            "https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg"
+                        )
+                    }
                 }
                 dao.updateLastSeen(ch.channelTitle, feed.first().videoId)
             }

@@ -40,6 +40,8 @@ import com.example.ui.theme.SurfaceDark
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 
+import androidx.compose.material.icons.filled.Close
+
 @Composable
 fun MiniPlayer(
     track: TrackEntity,
@@ -48,6 +50,7 @@ fun MiniPlayer(
     durationMs: Long,
     onTogglePlayPause: () -> Unit,
     onNext: () -> Unit,
+    onClose: () -> Unit = {},
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -134,6 +137,18 @@ fun MiniPlayer(
                         contentDescription = "הבא",
                         tint = TextPrimary,
                         modifier = Modifier.size(24.dp)
+                    )
+                }
+
+                IconButton(
+                    onClick = onClose,
+                    modifier = Modifier.testTag("mini_close_btn")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "סגור נגן",
+                        tint = TextSecondary,
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }

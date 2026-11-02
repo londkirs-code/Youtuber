@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "YouTube"
+rootProject.name = "Youtuber"
 
 include(":app")

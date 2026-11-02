@@ -45,7 +45,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.BorderStroke
 import com.example.data.local.SearchHistoryEntity
+import com.example.ui.theme.BorderDark
 import com.example.ui.theme.ScarletRed
 import com.example.ui.theme.SurfaceCard
 import com.example.ui.theme.TextPrimary
@@ -142,7 +144,7 @@ fun YouTubeSearchBar(
                     focusedContainerColor = SurfaceCard,
                     unfocusedContainerColor = SurfaceCard,
                     focusedBorderColor = ScarletRed,
-                    unfocusedBorderColor = Color.Transparent,
+                    unfocusedBorderColor = BorderDark,
                     focusedTextColor = TextPrimary,
                     unfocusedTextColor = TextPrimary
                 ),
@@ -162,6 +164,7 @@ fun YouTubeSearchBar(
         AnimatedVisibility(visible = suggestions.isNotEmpty()) {
             Card(
                 colors = CardDefaults.cardColors(containerColor = SurfaceCard),
+                border = BorderStroke(1.dp, BorderDark),
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier
                     .fillMaxWidth()

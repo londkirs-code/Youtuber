@@ -106,9 +106,9 @@ object Notifier {
 
     /** Notification shown by the foreground service while downloads are running. */
     fun foregroundNotification(ctx: Context): Notification =
-        NotificationCompat.Builder(ctx, CH_SERVICE)
+        NotificationCompat.Builder(ctx, CH_PROGRESS)
             .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle("YouTube מוריד קבצים ברקע")
+            .setContentTitle("Youtuber מכין הורדה...")
             .setContentIntent(openAppIntent(ctx))
             .setOngoing(true)
             .setSilent(true)
@@ -121,7 +121,7 @@ object Notifier {
             .setContentText("ההורדה התחילה...")
             .setProgress(0, 0, true)
             .build()
-        nm(ctx).notify(notifyId(taskId), n)
+        nm(ctx).notify(FG_ID, n)
     }
 
     /** Percent directly in title: [${percent}%] Title */
@@ -131,13 +131,13 @@ object Notifier {
         val now = System.currentTimeMillis()
         synchronized(lastProgressAt) {
             val last = lastProgressAt[taskId] ?: 0L
-            if (now - last < 800 && percent < 100) return   // avoid notification rate limiting
+            if (now - last < 600 && percent < 100) return   // avoid notification rate limiting
             lastProgressAt[taskId] = now
         }
         val b = progressBuilder(ctx, taskId, title, percent).setContentText(text)
         if (percent >= 0) b.setProgress(100, percent.coerceIn(0, 100), false)
         else b.setProgress(0, 0, true)
-        nm(ctx).notify(notifyId(taskId), b.build())
+        nm(ctx).notify(FG_ID, b.build())
     }
 
     private fun progressBuilder(ctx: Context, taskId: String, title: String, percent: Int): NotificationCompat.Builder {
@@ -210,6 +210,7 @@ object Notifier {
         synchronized(lastProgressAt) { lastProgressAt.remove(key) }
         thumbUrls.remove(key)
         nm(ctx).cancel(notifyId(key))
+        nm(ctx).cancel(FG_ID)
     }
 
     fun newVideo(ctx: Context, videoId: String, title: String, channel: String, thumbnailUrl: String) {

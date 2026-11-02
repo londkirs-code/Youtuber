@@ -380,9 +380,15 @@ class DownloadManager(private val context: Context) {
             Notifier.downloadFinished(context, taskId, title, finalFile.absolutePath)
 
         } catch (e: EngineCancelledException) {
-            log("[ביטול] ההורדה בוטלה.")
+            log("[ביטול] ההורדה בוטלה - קובץ חלקי נשמר בספרייה.")
             rawLog("[process] Canceled by user.")
+            scope.launch {
+                try { database.trackDao().updateTrackPartial(taskId, true) } catch (_: Exception) {}
+            }
         } catch (e: CancellationException) {
+            scope.launch {
+                try { database.trackDao().updateTrackPartial(taskId, true) } catch (_: Exception) {}
+            }
             throw e
         } catch (e: EngineExecutionException) {
             Log.e(TAG, "yt-dlp error", e)
@@ -390,14 +396,23 @@ class DownloadManager(private val context: Context) {
             log("[שגיאה] ${shortError(e)}")
             rawLog("[ERROR] ${e.message ?: "yt-dlp execution error"}")
             updateState(DownloadStatus.FAILED, hebrewStatus = reason)
+            scope.launch {
+                try { database.trackDao().updateTrackPartial(taskId, true) } catch (_: Exception) {}
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Download error", e)
             log("[שגיאה קריטית] ${e.localizedMessage ?: "שגיאה בלתי צפויה"}")
             rawLog("[FATAL] " + e.stackTraceToString())
             updateState(DownloadStatus.FAILED, hebrewStatus = "שגיאה במהלך ההורדה")
+            scope.launch {
+                try { database.trackDao().updateTrackPartial(taskId, true) } catch (_: Exception) {}
+            }
         } catch (e: Throwable) {
             if (e is CancellationException) throw e
             Log.e(TAG, "Fatal download error", e)
+            scope.launch {
+                try { database.trackDao().updateTrackPartial(taskId, true) } catch (_: Exception) {}
+            }
             log("[שגיאה קריטית] ${e.localizedMessage ?: e.javaClass.simpleName}")
             rawLog("[FATAL THROWABLE] " + e.stackTraceToString())
             updateState(DownloadStatus.FAILED, hebrewStatus = "שגיאה קריטית במהלך ההורדה")
@@ -526,7 +541,16 @@ class DownloadManager(private val context: Context) {
         Notifier.cancel(context, taskId)
         scope.launch {
             try {
-                database.trackDao().deleteTrackById(taskId)
+                val track = database.trackDao().getTrackById(taskId)
+                if (track != null) {
+                    val file = File(track.filePath)
+                    val partFile = File(track.filePath + ".part")
+                    if ((file.exists() && file.length() > 5000L) || (partFile.exists() && partFile.length() > 5000L)) {
+                        database.trackDao().updateTrackPartial(taskId, true)
+                    } else {
+                        database.trackDao().deleteTrackById(taskId)
+                    }
+                }
             } catch (_: Exception) {}
         }
     }
