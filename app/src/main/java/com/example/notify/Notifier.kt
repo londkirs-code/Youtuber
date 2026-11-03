@@ -241,4 +241,17 @@ object Notifier {
     fun cancelNewVideo(ctx: Context, videoId: String) {
         nm(ctx).cancel(notifyId("new_$videoId"))
     }
+
+    fun autoDownloadStarted(ctx: Context, videoId: String, title: String, channel: String, keyword: String, thumbnailUrl: String) {
+        if (!canNotify(ctx)) return
+        val n = NotificationCompat.Builder(ctx, CH_NEW)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setContentTitle("הורדה אוטומטית החלה: $channel")
+            .setContentText("זוהתה מילת המפתח '$keyword': $title")
+            .setStyle(NotificationCompat.BigTextStyle().bigText("זוהתה מילת המפתח '$keyword' בסרטון חדש:\n$title\nההורדה החלה באופן אוטומטי."))
+            .setContentIntent(openAppIntent(ctx, videoId = videoId, requestCode = notifyId("autodl_$videoId")))
+            .setAutoCancel(true)
+            .build()
+        nm(ctx).notify(notifyId("auto_dl_$videoId"), n)
+    }
 }

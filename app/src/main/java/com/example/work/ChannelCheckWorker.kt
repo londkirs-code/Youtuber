@@ -54,6 +54,14 @@ class ChannelCheckWorker(ctx: Context, params: WorkerParameters) : CoroutineWork
                         v.title.contains(autoDownloadKeyword, ignoreCase = true)
 
                     if (isKeywordMatch) {
+                        Notifier.autoDownloadStarted(
+                            applicationContext,
+                            v.videoId,
+                            v.title,
+                            ch.channelTitle,
+                            autoDownloadKeyword,
+                            "https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg"
+                        )
                         (applicationContext as? com.example.App)?.downloadManager?.startDownload(
                             videoId = v.videoId,
                             title = v.title,

@@ -448,12 +448,13 @@ class AudioPlayerService : Service() {
             builder.setLargeIcon(it)
         }
 
-        // Actions: [Previous, Play/Pause, Next, Speed, Close]
-        builder.addAction(Notification.Action.Builder(android.R.drawable.ic_media_previous, "הקודם", prevIntent).build())
+        // Actions: [Play/Pause, Speed, Close, Previous, Next]
+        // Primary compact view actions: 0 (Play/Pause), 1 (Speed), 2 (Close)
         builder.addAction(Notification.Action.Builder(playPauseIcon, if (_isPlaying.value) "השהה" else "נגן", playPauseIntent).build())
-        builder.addAction(Notification.Action.Builder(android.R.drawable.ic_media_next, "הבא", nextIntent).build())
         builder.addAction(Notification.Action.Builder(android.R.drawable.ic_menu_recent_history, speedFormatted, speedIntent).build())
         builder.addAction(Notification.Action.Builder(android.R.drawable.ic_menu_close_clear_cancel, "סגור", closeIntent).build())
+        builder.addAction(Notification.Action.Builder(android.R.drawable.ic_media_previous, "הקודם", prevIntent).build())
+        builder.addAction(Notification.Action.Builder(android.R.drawable.ic_media_next, "הבא", nextIntent).build())
 
         val mediaStyle = Notification.MediaStyle()
             .setMediaSession(mediaSession?.sessionToken)

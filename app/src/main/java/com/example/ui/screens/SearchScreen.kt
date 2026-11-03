@@ -63,6 +63,10 @@ import com.example.data.model.SearchResultItem
 import com.example.ui.components.VideoDetailDialog
 import com.example.ui.components.VideoResultCard
 import com.example.ui.components.YouTubeSearchBar
+import com.example.data.local.TrackEntity
+import com.example.data.model.DownloadStatus
+import com.example.data.model.DownloadTask
+import java.io.File
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -93,9 +97,12 @@ fun SearchScreen(
     isSearching: Boolean,
     savedVideos: List<SavedVideoEntity>,
     savedChannels: List<SavedChannelEntity>,
+    tracks: List<TrackEntity> = emptyList(),
+    downloadTasks: List<DownloadTask> = emptyList(),
     onToggleSaveVideo: (SearchResultItem) -> Unit,
     onToggleSaveChannel: (String) -> Unit,
     onDownload: (SearchResultItem, AudioQuality?) -> Unit,
+    onPlayTrack: (TrackEntity) -> Unit = {},
     onTrim: (SearchResultItem) -> Unit,
     onDismissSuggestions: () -> Unit = {},
     onLoadMore: () -> Unit = {},
@@ -141,54 +148,27 @@ fun SearchScreen(
                 .fillMaxSize()
                 .padding(horizontal = 14.dp, vertical = 6.dp)
         ) {
-            // Top Branding & Saved Content button
+            // Top Branding
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(bottom = 6.dp)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Image(
-                        painter = painterResource(com.example.R.drawable.ic_youtuber_logo),
-                        contentDescription = "Youtuber Logo",
-                        modifier = Modifier
-                            .size(28.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Youtuber",
-                        color = TextPrimary,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                // Dedicated button to open Saved Content management
-                Button(
-                    onClick = onOpenSavedContent,
-                    colors = ButtonDefaults.buttonColors(containerColor = SurfaceCard),
-                    border = BorderStroke(1.dp, BorderDark),
-                    shape = RoundedCornerShape(20.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                    modifier = Modifier.testTag("open_saved_content_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Bookmark,
-                        contentDescription = null,
-                        tint = WarningAmber,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "שמורים (${savedChannels.size + savedVideos.size})",
-                        color = TextPrimary,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
+                Image(
+                    painter = painterResource(com.example.R.drawable.ic_youtuber_logo),
+                    contentDescription = "Youtuber Logo",
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = "Youtuber",
+                    color = TextPrimary,
+                    fontSize = 19.sp,
+                    fontWeight = FontWeight.Bold
+                )
             }
 
             YouTubeSearchBar(
@@ -239,14 +219,36 @@ fun SearchScreen(
                         val isVideoSaved = savedVideos.any { it.id == item.id }
                         val isChannelSaved = savedChannels.any { it.channelTitle == item.channelTitle }
 
+                        val downloadedTrack = tracks.firstOrNull {
+                            (it.id == item.id || it.videoId == item.id || it.thumbnailUrl.contains(item.id)) &&
+                            !it.isPartial && File(it.filePath).exists() && File(it.filePath).length() > 0
+                        }
+                        val downloadTask = downloadTasks.firstOrNull { it.videoId == item.id }
+                        val isDownloaded = downloadedTrack != null || downloadTask?.status == DownloadStatus.COMPLETED
+                        val isDownloading = downloadTask != null && (downloadTask.status == DownloadStatus.DOWNLOADING || downloadTask.status == DownloadStatus.CONNECTING || downloadTask.status == DownloadStatus.TRIMMING || downloadTask.status == DownloadStatus.QUEUED)
+                        val isPartial = !isDownloaded && !isDownloading && (tracks.any { (it.id == item.id || it.videoId == item.id || it.thumbnailUrl.contains(item.id)) && it.isPartial } || downloadTask?.status == DownloadStatus.FAILED)
+                        val downloadProgress = downloadTask?.progressPercent ?: 0
+
                         VideoResultCard(
                             item = item,
                             isVideoSaved = isVideoSaved,
                             isChannelSaved = isChannelSaved,
+                            isDownloaded = isDownloaded,
+                            isPartial = isPartial,
+                            isDownloading = isDownloading,
+                            downloadProgress = downloadProgress,
                             onClick = { selectedDetailItem = item },
                             onCopyUrl = { copyUrl(item.id) },
                             onShareUrl = { shareUrl(item.id, item.title) },
                             onDownload = { onDownload(item, null) },
+                            onPlay = {
+                                if (downloadedTrack != null) {
+                                    onPlayTrack(downloadedTrack)
+                                } else {
+                                    val matched = tracks.firstOrNull { it.id == item.id || it.videoId == item.id || it.thumbnailUrl.contains(item.id) }
+                                    if (matched != null) onPlayTrack(matched)
+                                }
+                            },
                             onTrim = { onTrim(item) },
                             onToggleSaveVideo = { onToggleSaveVideo(item) },
                             onToggleSaveChannel = { onToggleSaveChannel(item.channelTitle) }
@@ -357,14 +359,36 @@ fun SearchScreen(
                             )
                             val isChannelSaved = savedChannels.any { it.channelTitle == sv.channelTitle }
 
+                            val downloadedTrack = tracks.firstOrNull {
+                                (it.id == sv.id || it.videoId == sv.id || it.thumbnailUrl.contains(sv.id)) &&
+                                !it.isPartial && File(it.filePath).exists() && File(it.filePath).length() > 0
+                            }
+                            val downloadTask = downloadTasks.firstOrNull { it.videoId == sv.id }
+                            val isDownloaded = downloadedTrack != null || downloadTask?.status == DownloadStatus.COMPLETED
+                            val isDownloading = downloadTask != null && (downloadTask.status == DownloadStatus.DOWNLOADING || downloadTask.status == DownloadStatus.CONNECTING || downloadTask.status == DownloadStatus.TRIMMING || downloadTask.status == DownloadStatus.QUEUED)
+                            val isPartial = !isDownloaded && !isDownloading && (tracks.any { (it.id == sv.id || it.videoId == sv.id || it.thumbnailUrl.contains(sv.id)) && it.isPartial } || downloadTask?.status == DownloadStatus.FAILED)
+                            val downloadProgress = downloadTask?.progressPercent ?: 0
+
                             VideoResultCard(
                                 item = resultItem,
                                 isVideoSaved = true,
                                 isChannelSaved = isChannelSaved,
+                                isDownloaded = isDownloaded,
+                                isPartial = isPartial,
+                                isDownloading = isDownloading,
+                                downloadProgress = downloadProgress,
                                 onClick = { selectedDetailItem = resultItem },
                                 onCopyUrl = { copyUrl(resultItem.id) },
                                 onShareUrl = { shareUrl(resultItem.id, resultItem.title) },
                                 onDownload = { onDownload(resultItem, null) },
+                                onPlay = {
+                                    if (downloadedTrack != null) {
+                                        onPlayTrack(downloadedTrack)
+                                    } else {
+                                        val matched = tracks.firstOrNull { it.id == sv.id || it.videoId == sv.id || it.thumbnailUrl.contains(sv.id) }
+                                        if (matched != null) onPlayTrack(matched)
+                                    }
+                                },
                                 onTrim = { onTrim(resultItem) },
                                 onToggleSaveVideo = { onToggleSaveVideo(resultItem) },
                                 onToggleSaveChannel = { onToggleSaveChannel(sv.channelTitle) }

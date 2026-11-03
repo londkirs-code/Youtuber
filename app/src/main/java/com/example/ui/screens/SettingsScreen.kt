@@ -67,6 +67,8 @@ import com.example.ui.theme.TextSecondary
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import android.content.Intent
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.FolderOpen
@@ -87,6 +89,7 @@ fun SettingsScreen(
     onAutoDownloadChanged: (enabled: Boolean, keyword: String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     var isFolderDialogOpen by remember { mutableStateOf(false) }
     var folderInput by remember { mutableStateOf(settings.downloadFolderPath) }
 
@@ -94,6 +97,12 @@ fun SettingsScreen(
         contract = ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
         if (uri != null) {
+            try {
+                val takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                context.contentResolver.takePersistableUriPermission(uri, takeFlags)
+            } catch (e: Exception) {
+                android.util.Log.w("SettingsScreen", "Failed to persist URI permission", e)
+            }
             onFolderUriChanged(uri.toString())
         }
     }
@@ -190,11 +199,7 @@ fun SettingsScreen(
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Medium
                             )
-                            val displayPath = if (settings.downloadFolderUri.isNotBlank()) {
-                                "תיקייה נבחרה במכשיר: ${settings.downloadFolderUri.substringAfterLast("%2F").substringAfterLast("%3A")}"
-                            } else {
-                                settings.downloadFolderPath
-                            }
+                            val displayPath = formatFolderDisplayName(settings.downloadFolderUri, settings.downloadFolderPath)
                             Text(
                                 text = displayPath,
                                 color = NeonCyan,
@@ -666,3 +671,23 @@ private fun SectionHeader(title: String) {
         modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
     )
 }
+
+private fun formatFolderDisplayName(folderUri: String, fallbackPath: String): String {
+    if (folderUri.isBlank()) return fallbackPath
+    return try {
+        val uri = android.net.Uri.parse(folderUri)
+        val docId = android.provider.DocumentsContract.getTreeDocumentId(uri)
+        val decoded = java.net.URLDecoder.decode(docId, "UTF-8")
+        val cleanName = decoded.substringAfterLast(":").substringAfterLast("/")
+        if (cleanName.isNotBlank()) "תיקייה נבחרה במכשיר: $cleanName" else "תיקייה נבחרה במכשיר: $decoded"
+    } catch (_: Exception) {
+        try {
+            val part = folderUri.substringAfterLast("%2F").substringAfterLast("%3A").substringAfterLast("/")
+            val decoded = java.net.URLDecoder.decode(part, "UTF-8")
+            "תיקייה נבחרה במכשיר: $decoded"
+        } catch (_: Exception) {
+            fallbackPath
+        }
+    }
+}
+

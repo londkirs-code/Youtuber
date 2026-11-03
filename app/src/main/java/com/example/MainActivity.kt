@@ -233,19 +233,10 @@ fun MainAppScreen(viewModel: MainViewModel) {
                         modifier = Modifier.testTag("nav_search_tab")
                     )
 
-                    val savedTotal = savedChannels.size + savedVideos.size
                     NavigationBarItem(
                         selected = currentTab == 1,
                         onClick = { viewModel.onTabClicked(1) },
-                        icon = {
-                            if (savedTotal > 0) {
-                                BadgedBox(badge = { Badge { Text("$savedTotal") } }) {
-                                    Icon(Icons.Default.Bookmark, contentDescription = "שמורים")
-                                }
-                            } else {
-                                Icon(Icons.Default.Bookmark, contentDescription = "שמורים")
-                            }
-                        },
+                        icon = { Icon(Icons.Default.Bookmark, contentDescription = "שמורים") },
                         label = { Text("שמורים", fontSize = 11.sp) },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = ScarletRed,
@@ -332,9 +323,12 @@ fun MainAppScreen(viewModel: MainViewModel) {
                     isSearching = isSearching,
                     savedVideos = savedVideos,
                     savedChannels = savedChannels,
+                    tracks = tracks,
+                    downloadTasks = downloadTasks,
                     onToggleSaveVideo = { viewModel.toggleSaveVideo(it) },
                     onToggleSaveChannel = { viewModel.toggleSaveChannel(it) },
                     onDownload = { item, quality -> viewModel.startDownload(item, applyTrim = false, quality = quality) },
+                    onPlayTrack = { track -> viewModel.playTrack(track) },
                     onTrim = { viewModel.openTrimmerDialog(it) },
                     onDismissSuggestions = { viewModel.dismissSuggestions() },
                     onLoadMore = { viewModel.loadMoreSearchResults() },

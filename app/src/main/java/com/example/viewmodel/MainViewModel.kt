@@ -452,7 +452,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         closeTrimmerDialog()
-        _currentTab.value = 1
+        _currentTab.value = 2
     }
 
     // Playback Controls (Clicking opens Full Player directly per Requirement 2)

@@ -130,7 +130,9 @@ class DownloadManager(private val context: Context) {
                         isLiveCapture = isLive,
                         isTrimmed = false,
                         trimStartMs = 0L,
-                        trimEndMs = 0L
+                        trimEndMs = 0L,
+                        isPartial = true,
+                        videoId = videoId
                     )
                 )
             } catch (e: Exception) {
@@ -358,10 +360,23 @@ class DownloadManager(private val context: Context) {
                 isLiveCapture = isLive,
                 isTrimmed = isTrimmed,
                 trimStartMs = trimRange?.startMs ?: 0L,
-                trimEndMs = trimRange?.endMs ?: 0L
+                trimEndMs = trimRange?.endMs ?: 0L,
+                isPartial = false,
+                videoId = videoId
             )
 
             database.trackDao().insertTrack(track)
+
+            if (settings.downloadFolderUri.isNotBlank()) {
+                try {
+                    copyToSafTree(context, settings.downloadFolderUri, finalFile, title, ext)
+                    log("[שמירה] הקובץ נשמר בהצלחה בתיקייה שנבחרה במכשיר!")
+                    rawLog("[saf] Exported to external folder: ${settings.downloadFolderUri}")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed saving to SAF tree folder: ${e.message}", e)
+                    log("[שמירה] שים לב: הקובץ שמור בספרייה (העתקה לתיקייה חיצונית נכשלה: ${e.message})")
+                }
+            }
 
             log("[הצלחה] הקובץ מוכן ונשמר בספרייה!")
             rawLog("[success] File successfully saved: ${finalFile.name} (${finalFile.length()} bytes)")
@@ -612,6 +627,26 @@ class DownloadManager(private val context: Context) {
             String.format("%d:%02d:%02d", hours, remainingMin, sec)
         } else {
             String.format("%02d:%02d", min, sec)
+        }
+    }
+
+    private fun copyToSafTree(ctx: Context, treeUriStr: String, sourceFile: File, title: String, ext: String) {
+        val treeUri = android.net.Uri.parse(treeUriStr)
+        val docId = android.provider.DocumentsContract.getTreeDocumentId(treeUri)
+        val parentDocUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
+        val cleanTitle = title.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim().ifEmpty { "Audio" }
+        val mimeType = if (ext.equals("mp3", ignoreCase = true)) "audio/mpeg" else "audio/m4a"
+        val newDocUri = android.provider.DocumentsContract.createDocument(
+            ctx.contentResolver,
+            parentDocUri,
+            mimeType,
+            "$cleanTitle.$ext"
+        ) ?: throw IllegalStateException("Could not create document in tree")
+
+        ctx.contentResolver.openOutputStream(newDocUri)?.use { out ->
+            sourceFile.inputStream().use { inp ->
+                inp.copyTo(out)
+            }
         }
     }
 

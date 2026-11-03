@@ -20,5 +20,7 @@ data class TrackEntity(
     val trimStartMs: Long = 0L,
     val trimEndMs: Long = 0L,
     @ColumnInfo(defaultValue = "0")
-    val isPartial: Boolean = false
+    val isPartial: Boolean = false,
+    @ColumnInfo(defaultValue = "''")
+    val videoId: String = ""
 )
