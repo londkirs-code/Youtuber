@@ -75,6 +75,7 @@ fun VideoResultCard(
     onTrim: () -> Unit = {},
     onToggleSaveVideo: () -> Unit = {},
     onToggleSaveChannel: () -> Unit = {},
+    onOpenChannel: (channelTitle: String, channelId: String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -171,13 +172,22 @@ fun VideoResultCard(
 
                     Spacer(modifier = Modifier.height(4.dp))
 
-                    Text(
-                        text = item.channelTitle,
-                        color = TextSecondary,
-                        fontSize = 12.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .clickable { onOpenChannel(item.channelTitle, item.channelId) }
+                            .padding(vertical = 2.dp, horizontal = 2.dp)
+                    ) {
+                        Text(
+                            text = item.channelTitle,
+                            color = NeonCyan,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
 
                     // Upload date / time ago + views with high contrast
                     Row(

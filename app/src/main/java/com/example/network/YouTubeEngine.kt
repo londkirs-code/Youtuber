@@ -446,26 +446,47 @@ object YouTubeEngine {
         }
     }
 
+    /** Resolves channelId using the channel title by finding a sample video from that channel. */
+    suspend fun resolveChannelIdByTitle(channelTitle: String): String? = withContext(Dispatchers.IO) {
+        if (channelTitle.isBlank()) return@withContext null
+        try {
+            val videos = searchVideos(channelTitle)
+            val match = videos.firstOrNull { it.channelTitle.equals(channelTitle, ignoreCase = true) } ?: videos.firstOrNull()
+            if (match != null) {
+                if (match.channelId.isNotBlank()) return@withContext match.channelId
+                return@withContext resolveChannelIdFromVideo(match.id)
+            }
+            null
+        } catch (e: Exception) {
+            Log.w(TAG, "resolveChannelIdByTitle failed", e)
+            null
+        }
+    }
+
     /** Latest uploads from a channel sorted newest first (Requirement: סרטונים מערוץ שמור מהחדש לישן) */
     suspend fun getChannelVideosNewestFirst(channelId: String, channelTitle: String): List<SearchResultItem> = withContext(Dispatchers.IO) {
-        val feed = if (channelId.isNotBlank()) fetchChannelFeed(channelId) else emptyList()
+        var resolvedId = channelId
+        if (resolvedId.isBlank()) {
+            resolvedId = resolveChannelIdByTitle(channelTitle).orEmpty()
+        }
+        val feed = if (resolvedId.isNotBlank()) fetchChannelFeed(resolvedId) else emptyList()
         if (feed.isNotEmpty()) {
             feed.map { entry ->
                 SearchResultItem(
                     id = entry.videoId,
                     title = entry.title,
                     channelTitle = channelTitle,
-                    durationText = "סרטון חדש",
+                    durationText = "סרטון מהערוץ",
                     durationMs = 0L,
                     thumbnailUrl = "https://i.ytimg.com/vi/${entry.videoId}/hqdefault.jpg",
                     viewsText = "",
                     uploadedText = formatPublishedTime(entry.published),
                     isLive = false,
-                    channelId = channelId
+                    channelId = resolvedId
                 )
             }
         } else {
-            // Fallback: search videos for this channel title
+            // Fallback: search videos for this channel title and filter by author
             searchVideos(channelTitle).filter {
                 it.channelTitle.equals(channelTitle, ignoreCase = true) || it.title.contains(channelTitle, ignoreCase = true)
             }

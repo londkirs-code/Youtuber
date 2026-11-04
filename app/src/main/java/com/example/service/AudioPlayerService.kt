@@ -117,6 +117,12 @@ class AudioPlayerService : Service() {
                 override fun onFastForward() { forward10Seconds() }
                 override fun onRewind() { rewind10Seconds() }
                 override fun onStop() { stopPlayback() }
+                override fun onCustomAction(action: String, extras: android.os.Bundle?) {
+                    when (action) {
+                        ACTION_CYCLE_SPEED -> cyclePlaybackSpeed()
+                        ACTION_STOP -> stopPlayback()
+                    }
+                }
             })
             isActive = true
         }
@@ -230,6 +236,7 @@ class AudioPlayerService : Service() {
             else -> 1.00f
         }
         setPlaybackSpeed(next)
+        updateMediaSessionState(if (_isPlaying.value) PlaybackState.STATE_PLAYING else PlaybackState.STATE_PAUSED)
         _currentTrack.value?.let { updateNotification(it) }
     }
 
@@ -317,6 +324,7 @@ class AudioPlayerService : Service() {
     }
 
     private fun updateMediaSessionState(state: Int) {
+        val speedFormatted = String.format("%.2fx", _playbackSpeed.value).replace(".00", "")
         val playbackState = PlaybackState.Builder()
             .setActions(
                 PlaybackState.ACTION_PLAY or
@@ -328,6 +336,20 @@ class AudioPlayerService : Service() {
                 PlaybackState.ACTION_REWIND or
                 PlaybackState.ACTION_SEEK_TO or
                 PlaybackState.ACTION_STOP
+            )
+            .addCustomAction(
+                PlaybackState.CustomAction.Builder(
+                    ACTION_CYCLE_SPEED,
+                    "מהירות: $speedFormatted",
+                    android.R.drawable.ic_menu_recent_history
+                ).build()
+            )
+            .addCustomAction(
+                PlaybackState.CustomAction.Builder(
+                    ACTION_STOP,
+                    "סגור נגן",
+                    android.R.drawable.ic_menu_close_clear_cancel
+                ).build()
             )
             .setState(state, _currentPositionMs.value, _playbackSpeed.value)
             .build()

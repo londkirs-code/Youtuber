@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
@@ -87,6 +88,7 @@ fun LibraryScreen(
     onDeleteTrack: (TrackEntity) -> Unit,
     onCreatePlaylist: (String) -> Unit,
     onAddTrackToPlaylist: (Long, String) -> Unit,
+    onOpenChannel: (channelTitle: String, channelId: String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -256,7 +258,8 @@ fun LibraryScreen(
                             onShareUrl = { shareUrl(track) },
                             onShareFile = { shareAudioFile(track) },
                             onDelete = { onDeleteTrack(track) },
-                            onAddToPlaylist = { playlistId -> onAddTrackToPlaylist(playlistId, track.id) }
+                            onAddToPlaylist = { playlistId -> onAddTrackToPlaylist(playlistId, track.id) },
+                            onOpenChannel = onOpenChannel
                         )
                     }
                 }
@@ -396,7 +399,8 @@ private fun TrackRowItem(
     onShareUrl: () -> Unit,
     onShareFile: () -> Unit,
     onDelete: () -> Unit,
-    onAddToPlaylist: (Long) -> Unit
+    onAddToPlaylist: (Long) -> Unit,
+    onOpenChannel: (channelTitle: String, channelId: String) -> Unit = { _, _ -> }
 ) {
     var isMenuOpen by remember { mutableStateOf(false) }
 
@@ -451,11 +455,16 @@ private fun TrackRowItem(
                     }
                     Text(
                         text = track.artist,
-                        color = TextSecondary,
+                        color = NeonCyan,
                         fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false)
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .clickable { onOpenChannel(track.artist, "") }
+                            .padding(vertical = 1.dp)
+                            .weight(1f, fill = false)
                     )
                     if (track.durationMs > 0) {
                         Spacer(modifier = Modifier.width(6.dp))
@@ -473,6 +482,27 @@ private fun TrackRowItem(
                             fontSize = 10.sp
                         )
                     }
+                }
+
+                // Storage location display (User Requirement: במידע על פריטים שהורדו יהיה מידע איפה הם שמורים)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(top = 2.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Folder,
+                        contentDescription = null,
+                        tint = TextTertiary,
+                        modifier = Modifier.size(11.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "נשמר ב: ${track.filePath.ifBlank { "ספריית המכשיר" }}",
+                        color = TextTertiary,
+                        fontSize = 10.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
             }
 

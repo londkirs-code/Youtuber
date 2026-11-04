@@ -412,7 +412,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun clearSearch() {
         _searchQuery.value = ""
         _searchSuggestions.value = emptyList()
-        _searchResults.value = emptyList()
+        // Retain existing search results so pressing X does not wipe them out per user request
     }
 
     fun openTrimmerDialog(item: SearchResultItem) {

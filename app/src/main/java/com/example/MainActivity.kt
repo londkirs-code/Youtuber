@@ -54,6 +54,7 @@ import com.example.notify.Notifier
 import com.example.ui.components.AudioTrimmerDialog
 import com.example.ui.components.FullPlayerSheet
 import com.example.ui.components.MiniPlayer
+import com.example.ui.screens.ChannelScreen
 import com.example.ui.screens.DownloadsScreen
 import com.example.ui.screens.LibraryScreen
 import com.example.ui.screens.SavedContentScreen
@@ -183,6 +184,7 @@ fun MainAppScreen(viewModel: MainViewModel) {
     }
 
     var isSavedContentOpen by remember { mutableStateOf(false) }
+    var activeChannelTarget by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
@@ -332,7 +334,8 @@ fun MainAppScreen(viewModel: MainViewModel) {
                     onTrim = { viewModel.openTrimmerDialog(it) },
                     onDismissSuggestions = { viewModel.dismissSuggestions() },
                     onLoadMore = { viewModel.loadMoreSearchResults() },
-                    onOpenSavedContent = { viewModel.selectTab(1) }
+                    onOpenSavedContent = { viewModel.selectTab(1) },
+                    onOpenChannel = { title, id -> activeChannelTarget = Pair(title, id) }
                 )
                 1 -> SavedContentScreen(
                     savedChannels = savedChannels,
@@ -350,7 +353,8 @@ fun MainAppScreen(viewModel: MainViewModel) {
                         } else {
                             viewModel.startDownload(item, applyTrim = false, quality = null)
                         }
-                    }
+                    },
+                    onOpenChannel = { title, id -> activeChannelTarget = Pair(title, id) }
                 )
                 2 -> DownloadsScreen(
                     tasks = downloadTasks,
@@ -365,7 +369,8 @@ fun MainAppScreen(viewModel: MainViewModel) {
                     onPlayTrack = { list, idx -> viewModel.playTrackInList(list, idx) },
                     onDeleteTrack = { viewModel.deleteTrack(it) },
                     onCreatePlaylist = { viewModel.createPlaylist(it) },
-                    onAddTrackToPlaylist = { plId, trId -> viewModel.addTrackToPlaylist(plId, trId) }
+                    onAddTrackToPlaylist = { plId, trId -> viewModel.addTrackToPlaylist(plId, trId) },
+                    onOpenChannel = { title, id -> activeChannelTarget = Pair(title, id) }
                 )
                 4 -> SettingsScreen(
                     settings = settings,
@@ -441,7 +446,25 @@ fun MainAppScreen(viewModel: MainViewModel) {
                 } else {
                     viewModel.startDownload(item, applyTrim = false, quality = null)
                 }
-            }
+            },
+            onOpenChannel = { title, id -> activeChannelTarget = Pair(title, id) }
+        )
+    }
+
+    // Dedicated Channel Screen (Requirement: עמוד ערוץ ייעודי מבוסס מידע של הערוץ מהחדש לישן)
+    activeChannelTarget?.let { (chTitle, chId) ->
+        ChannelScreen(
+            channelTitle = chTitle,
+            channelId = chId,
+            savedChannels = savedChannels,
+            tracks = tracks,
+            downloadTasks = downloadTasks,
+            onBack = { activeChannelTarget = null },
+            onToggleSaveChannel = { viewModel.toggleSaveChannel(it) },
+            onToggleNotification = { title, enabled -> viewModel.toggleChannelNotification(title, enabled) },
+            onDownloadVideo = { item, quality -> viewModel.startDownload(item, applyTrim = false, quality = quality) },
+            onPlayTrack = { track -> viewModel.playTrack(track) },
+            onTrim = { viewModel.openTrimmerDialog(it) }
         )
     }
 }

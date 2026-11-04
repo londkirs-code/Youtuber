@@ -107,6 +107,7 @@ fun SearchScreen(
     onDismissSuggestions: () -> Unit = {},
     onLoadMore: () -> Unit = {},
     onOpenSavedContent: () -> Unit = {},
+    onOpenChannel: (channelTitle: String, channelId: String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -251,7 +252,8 @@ fun SearchScreen(
                             },
                             onTrim = { onTrim(item) },
                             onToggleSaveVideo = { onToggleSaveVideo(item) },
-                            onToggleSaveChannel = { onToggleSaveChannel(item.channelTitle) }
+                            onToggleSaveChannel = { onToggleSaveChannel(item.channelTitle) },
+                            onOpenChannel = onOpenChannel
                         )
                     }
 
@@ -391,7 +393,8 @@ fun SearchScreen(
                                 },
                                 onTrim = { onTrim(resultItem) },
                                 onToggleSaveVideo = { onToggleSaveVideo(resultItem) },
-                                onToggleSaveChannel = { onToggleSaveChannel(sv.channelTitle) }
+                                onToggleSaveChannel = { onToggleSaveChannel(sv.channelTitle) },
+                                onOpenChannel = onOpenChannel
                             )
                         }
                     }
@@ -460,7 +463,8 @@ fun SearchScreen(
                 onCopyUrl = { copyUrl(item.id) },
                 onShareUrl = { shareUrl(item.id, item.title) },
                 onToggleSaveVideo = { onToggleSaveVideo(item) },
-                onToggleSaveChannel = { onToggleSaveChannel(item.channelTitle) }
+                onToggleSaveChannel = { onToggleSaveChannel(item.channelTitle) },
+                onOpenChannel = onOpenChannel
             )
         }
     }

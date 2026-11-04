@@ -121,10 +121,10 @@ object Notifier {
             .setContentText("ההורדה התחילה...")
             .setProgress(0, 0, true)
             .build()
-        nm(ctx).notify(FG_ID, n)
+        nm(ctx).notify(notifyId(taskId), n)
     }
 
-    /** Percent directly in title: [${percent}%] Title */
+    /** Percent directly in title: [${percent}%] Title - each download has its own notification */
     fun downloadProgress(ctx: Context, taskId: String, title: String, percent: Int, text: String, thumbnailUrl: String = "") {
         if (!canNotify(ctx)) return
         if (thumbnailUrl.isNotBlank()) cacheThumbnail(taskId, thumbnailUrl)
@@ -137,7 +137,7 @@ object Notifier {
         val b = progressBuilder(ctx, taskId, title, percent).setContentText(text)
         if (percent >= 0) b.setProgress(100, percent.coerceIn(0, 100), false)
         else b.setProgress(0, 0, true)
-        nm(ctx).notify(FG_ID, b.build())
+        nm(ctx).notify(notifyId(taskId), b.build())
     }
 
     private fun progressBuilder(ctx: Context, taskId: String, title: String, percent: Int): NotificationCompat.Builder {

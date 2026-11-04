@@ -85,7 +85,8 @@ fun VideoDetailDialog(
     onCopyUrl: () -> Unit,
     onShareUrl: () -> Unit,
     onToggleSaveVideo: () -> Unit,
-    onToggleSaveChannel: () -> Unit
+    onToggleSaveChannel: () -> Unit,
+    onOpenChannel: (channelTitle: String, channelId: String) -> Unit = { _, _ -> }
 ) {
     var selectedQuality by remember { mutableStateOf(AudioQuality.BEST) }
 
@@ -193,30 +194,47 @@ fun VideoDetailDialog(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Box(
-                        contentAlignment = Alignment.Center,
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
-                            .size(28.dp)
-                            .clip(CircleShape)
-                            .background(ScarletRed.copy(alpha = 0.2f))
-                    ) {
-                        Text(
-                            text = item.channelTitle.take(1).uppercase(),
-                            color = ScarletRed,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(item.channelTitle, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (item.viewsText.isNotBlank()) {
-                                Text(item.viewsText, color = TextTertiary, fontSize = 11.sp)
-                                Spacer(modifier = Modifier.width(6.dp))
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                onOpenChannel(item.channelTitle, item.channelId)
+                                onDismiss()
                             }
-                            if (item.uploadedText.isNotBlank()) {
-                                Text("• ${item.uploadedText}", color = TextTertiary, fontSize = 11.sp)
+                            .padding(vertical = 2.dp)
+                    ) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .background(ScarletRed.copy(alpha = 0.2f))
+                        ) {
+                            Text(
+                                text = item.channelTitle.take(1).uppercase(),
+                                color = ScarletRed,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text(
+                                text = item.channelTitle,
+                                color = NeonCyan,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (item.viewsText.isNotBlank()) {
+                                    Text(item.viewsText, color = TextTertiary, fontSize = 11.sp)
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                }
+                                if (item.uploadedText.isNotBlank()) {
+                                    Text("• ${item.uploadedText}", color = TextTertiary, fontSize = 11.sp)
+                                }
                             }
                         }
                     }

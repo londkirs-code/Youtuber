@@ -92,6 +92,17 @@ class DownloadManager(private val context: Context) {
         settings: UserSettings
     ): String {
         val taskId = UUID.randomUUID().toString()
+        val targetFolder = getDownloadFolder(settings)
+        val sanitizedTitle = title.replace(Regex("[^a-zA-Z0-9א-ת _-]"), "").trim().ifEmpty { "Audio_$videoId" }
+        val rawBase = File(targetFolder, "${sanitizedTitle}_raw_${System.currentTimeMillis()}")
+        val initialFilePath = rawBase.absolutePath + ".m4a"
+
+        val destinationNote = if (settings.downloadFolderUri.isNotBlank()) {
+            "נשמר ב: ${settings.downloadFolderPath} (${targetFolder.absolutePath})"
+        } else {
+            "נשמר ב: ${targetFolder.absolutePath}"
+        }
+
         val newTask = DownloadTask(
             id = taskId,
             videoId = videoId,
@@ -101,7 +112,9 @@ class DownloadManager(private val context: Context) {
             isLiveStream = isLive,
             trimRange = trimRange,
             status = DownloadStatus.QUEUED,
-            hebrewStatusText = "נוסף לתור ההורדות..."
+            hebrewStatusText = "נוסף לתור ההורדות...",
+            filePath = initialFilePath,
+            logs = listOf(destinationNote)
         )
 
         _tasks.update { listOf(newTask) + it }
@@ -109,12 +122,6 @@ class DownloadManager(private val context: Context) {
         // Keep the process alive + show "download started" notification
         DownloadService.start(context)
         Notifier.downloadStarted(context, taskId, title, thumbnailUrl)
-
-        // Insert initial track in Room immediately so it appears in Library right away (Requirement 6)
-        val targetFolder = getDownloadFolder(settings)
-        val sanitizedTitle = title.replace(Regex("[^a-zA-Z0-9א-ת _-]"), "").trim().ifEmpty { "Audio_$videoId" }
-        val rawBase = File(targetFolder, "${sanitizedTitle}_raw_${System.currentTimeMillis()}")
-        val initialFilePath = rawBase.absolutePath + ".m4a"
 
         scope.launch {
             try {
@@ -247,8 +254,8 @@ class DownloadManager(private val context: Context) {
             updateState(DownloadStatus.CONNECTING, hebrewStatus = "מתחבר ליוטיוב ומחלץ שמע...")
 
             var rawFile: File? = null
-            // Let yt-dlp choose its current default clients first; android_vr is no longer reliable.
-            val playerClients = listOf("default", "tv_samsung", "visionos", "tv", "web_embedded")
+            // For live, start strictly with "default". For normal downloads, use all standard clients.
+            val playerClients = if (isLive) listOf("default") else listOf("default", "tv_samsung", "visionos", "tv", "web_embedded")
             val attemptErrors = mutableListOf<String>()
 
             suspend fun tryPlayerClients(stage: String) {
@@ -281,6 +288,48 @@ class DownloadManager(private val context: Context) {
                         log("[yt-dlp] הלקוח $playerClient נכשל: ${shortError(e)}")
                         rawLog("[fallback] $reason")
                         rawFile = null
+                    }
+                }
+
+                // In live stream: only try fallback player clients if extraction itself failed (e.g. No video formats found)
+                if (isLive && (rawFile == null || !rawFile!!.exists() || rawFile!!.length() == 0L)) {
+                    val extractionFailed = attemptErrors.any { error ->
+                        error.contains("No video formats found", ignoreCase = true) ||
+                            error.contains("ExtractorError", ignoreCase = true) ||
+                            error.contains("Unable to extract", ignoreCase = true)
+                    }
+                    if (extractionFailed) {
+                        val fallbackClients = listOf("tv_samsung", "visionos", "tv", "web_embedded")
+                        for (playerClient in fallbackClients) {
+                            if (rawFile != null && rawFile!!.exists() && rawFile!!.length() > 0L) return
+
+                            try {
+                                log("[yt-dlp] מנסה לקוח גיבוי לחילוץ: $playerClient ($stage)")
+                                rawFile = runYtDlp(
+                                    taskId, videoId, isLive, targetFolder, rawBase,
+                                    playerClient, ::log, ::rawLog, ::updateState
+                                )
+                                if (rawFile != null && rawFile!!.exists() && rawFile!!.length() > 0L) {
+                                    log("[yt-dlp] הלקוח $playerClient הצליח להפיק קובץ שמע.")
+                                    rawLog("[fallback] success with player_client=$playerClient")
+                                    return
+                                }
+                                val reason = "$playerClient: no non-empty output file"
+                                attemptErrors += reason
+                                rawLog("[fallback] $reason")
+                                rawFile = null
+                            } catch (e: EngineCancelledException) {
+                                throw e
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                val reason = "$playerClient: ${shortError(e)}"
+                                attemptErrors += reason
+                                log("[yt-dlp] הלקוח $playerClient נכשל: ${shortError(e)}")
+                                rawLog("[fallback] $reason")
+                                rawFile = null
+                            }
+                        }
                     }
                 }
             }
@@ -378,6 +427,7 @@ class DownloadManager(private val context: Context) {
                 }
             }
 
+            log("[מיקום סופי] נשמר בהצלחה בנתיב: ${finalFile.absolutePath}")
             log("[הצלחה] הקובץ מוכן ונשמר בספרייה!")
             rawLog("[success] File successfully saved: ${finalFile.name} (${finalFile.length()} bytes)")
             _tasks.update { list ->
@@ -455,92 +505,156 @@ class DownloadManager(private val context: Context) {
     ): File? {
         targetFolder.listFiles { file -> file.name.startsWith(rawBase.name + ".") }?.forEach { it.delete() }
 
-        val args = mutableListOf(
-            "-f", "bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio/best",
-            "-o", rawBase.absolutePath + ".%(ext)s",
-            "--no-playlist", "--no-mtime", "--newline",
-            "--retries", "5", "--socket-timeout", "20",
-            "--extractor-args", "youtube:player_client=$playerClient"
-        )
-        if (isLive) {
-            args += "--no-part"
-            args += "--hls-use-mpegts"
-        }
-        args += "https://www.youtube.com/watch?v=$videoId"
-        rawLog("[cmd] yt-dlp " + args.joinToString(" ") { token ->
-            if (token.any { it.isWhitespace() }) "\"$token\"" else token
-        })
-
-        var ticker: Job? = null
-        if (isLive) {
-            log("[שידור חי] מתחיל הקלטה (yt-dlp)...")
-            updateState(DownloadStatus.RECORDING_LIVE, 0, "LIVE", "0 MB", "LIVE", "מקליט שידור חי...", 0L)
-            ticker = scope.launch {
-                var sec = 0L
-                while (isActive) {
-                    delay(1000)
-                    sec++
-                    updateState(
-                        DownloadStatus.RECORDING_LIVE, -1, "LIVE", null, "LIVE",
-                        "מקליט שידור חי: ${formatDuration(sec * 1000L)}", sec
-                    )
-                }
-            }
-        } else {
-            updateState(DownloadStatus.DOWNLOADING, 0, null, null, null, "מתחיל להוריד...", null)
+        fun cleanPartialFiles() {
+            targetFolder.listFiles { file -> file.name.startsWith(rawBase.name + ".") }?.forEach { it.delete() }
         }
 
-        val callback = object : YtDlpBridgeCallback {
-            private var lastLoggedPercent = -1
+        fun findOutputFile(): File? {
+            return targetFolder.listFiles { file ->
+                file.isFile && file.name.startsWith(rawBase.name + ".") &&
+                    !file.name.endsWith(".part") && !file.name.endsWith(".ytdl") && file.length() > 0L
+            }?.maxByOrNull { it.length() }
+        }
 
-            override fun onLog(level: String, message: String) {
-                rawLog("[$level] $message")
+        suspend fun executeFormat(formatSpec: String): Pair<Int, File?> {
+            cleanPartialFiles()
+
+            val args = mutableListOf(
+                "-f", formatSpec,
+                "-o", rawBase.absolutePath + ".%(ext)s",
+                "--no-playlist", "--no-mtime", "--newline",
+                "--retries", "5", "--socket-timeout", "20",
+                "--extractor-args", "youtube:player_client=$playerClient"
+            )
+
+            // For live streams: use native HLS downloader without ffmpeg network dependency
+            if (isLive) {
+                args += "--no-part"
+                args += "--hls-prefer-native"
+                args += "--no-check-formats"
+                args += "--fragment-retries"
+                args += "infinite"
             }
 
-            override fun onProgress(percent: Double, downloadedBytes: Long, totalBytes: Long, speed: String, etaSeconds: Long) {
-                if (isLive) return
-                val safePercent = percent.toInt().coerceIn(0, 99)
-                val downloadedText = bytesToText(downloadedBytes)
-                val totalText = if (totalBytes > 0L) bytesToText(totalBytes) else null
-                updateState(
-                    DownloadStatus.DOWNLOADING, safePercent, speed.takeIf { it.isNotBlank() },
-                    downloadedText, totalText,
-                    "מוריד נתוני שמע: $safePercent%" + (totalText?.let { " מתוך $it" } ?: ""), null
-                )
+            args += "https://www.youtube.com/watch?v=$videoId"
+            rawLog("[cmd] yt-dlp " + args.joinToString(" ") { token ->
+                if (token.any { it.isWhitespace() }) "\"$token\"" else token
+            })
 
-                // Log Hebrew status with percentage (Requirement 10)
-                if (safePercent >= lastLoggedPercent + 15 || safePercent in listOf(25, 50, 75, 95)) {
-                    if (safePercent != lastLoggedPercent) {
-                        lastLoggedPercent = safePercent
-                        log("[הורדה] התקדמות: $safePercent% ($downloadedText מתוך ${totalText ?: "--"}) במהירות ${speed.ifEmpty { "..." }}")
+            var ticker: Job? = null
+            if (isLive) {
+                log("[שידור חי] מתחיל הקלטה (yt-dlp, פורמט $formatSpec)...")
+                updateState(DownloadStatus.RECORDING_LIVE, 0, "LIVE", "0 MB", "LIVE", "מקליט שידור חי...", 0L)
+                ticker = scope.launch {
+                    var sec = 0L
+                    while (isActive) {
+                        delay(1000)
+                        sec++
+                        updateState(
+                            DownloadStatus.RECORDING_LIVE, -1, "LIVE", null, "LIVE",
+                            "מקליט שידור חי: ${formatDuration(sec * 1000L)}", sec
+                        )
                     }
                 }
+            } else {
+                updateState(DownloadStatus.DOWNLOADING, 0, null, null, null, "מתחיל להוריד...", null)
             }
 
-            override fun isCancelled(): Boolean = false
+            val callback = object : YtDlpBridgeCallback {
+                private var lastLoggedPercent = -1
+
+                override fun onLog(level: String, message: String) {
+                    rawLog("[$level] $message")
+                }
+
+                override fun onProgress(percent: Double, downloadedBytes: Long, totalBytes: Long, speed: String, etaSeconds: Long) {
+                    if (isLive) return
+                    val safePercent = percent.toInt().coerceIn(0, 99)
+                    val downloadedText = bytesToText(downloadedBytes)
+                    val totalText = if (totalBytes > 0L) bytesToText(totalBytes) else null
+                    updateState(
+                        DownloadStatus.DOWNLOADING, safePercent, speed.takeIf { it.isNotBlank() },
+                        downloadedText, totalText,
+                        "מוריד נתוני שמע: $safePercent%" + (totalText?.let { " מתוך $it" } ?: ""), null
+                    )
+
+                    // Log Hebrew status with percentage (Requirement 10)
+                    if (safePercent >= lastLoggedPercent + 15 || safePercent in listOf(25, 50, 75, 95)) {
+                        if (safePercent != lastLoggedPercent) {
+                            lastLoggedPercent = safePercent
+                            log("[הורדה] התקדמות: $safePercent% ($downloadedText מתוך ${totalText ?: "--"}) במהירות ${speed.ifEmpty { "..." }}")
+                        }
+                    }
+                }
+
+                override fun isCancelled(): Boolean = false
+            }
+
+            var exitCode = -1
+            try {
+                exitCode = EngineRuntime.runYtDlp(context, taskId, args, callback)
+                rawLog("[process] yt-dlp exit code: $exitCode for format=$formatSpec")
+            } catch (error: EngineCancelledException) {
+                rawLog("[process] Execution canceled by user.")
+                if (!(isLive && liveStopRequested.contains(taskId))) throw error
+                log("[שידור חי] ההקלטה הופסקה ונשמרה.")
+                exitCode = 0
+            } catch (error: EngineExecutionException) {
+                rawLog("[error] yt-dlp execution error for format $formatSpec: ${error.message}")
+                exitCode = -1
+            } finally {
+                ticker?.cancel()
+            }
+
+            val produced = findOutputFile()
+            return Pair(exitCode, produced)
         }
 
-        try {
-            val exitCode = EngineRuntime.runYtDlp(context, taskId, args, callback)
-            rawLog("[process] yt-dlp exit code: $exitCode")
+        if (!isLive) {
+            val (exitCode, produced) = executeFormat("bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio/best")
             if (exitCode != 0) {
                 throw EngineExecutionException("yt-dlp exited with code $exitCode for player_client=$playerClient")
             }
-        } catch (error: EngineCancelledException) {
-            rawLog("[process] Execution canceled by user.")
-            if (!(isLive && liveStopRequested.contains(taskId))) throw error
-            log("[שידור חי] ההקלטה הופסקה ונשמרה.")
-        } catch (error: EngineExecutionException) {
-            rawLog("[error] " + (error.message ?: "yt-dlp execution error"))
-            throw error
-        } finally {
-            ticker?.cancel()
+            return produced
         }
 
-        return targetFolder.listFiles { file ->
-            file.isFile && file.name.startsWith(rawBase.name + ".") &&
-                !file.name.endsWith(".part") && !file.name.endsWith(".ytdl") && file.length() > 0L
-        }?.maxByOrNull { it.length() }
+        // Live stream execution:
+        // Attempt 1: format 234 (audio only)
+        log("[שידור חי] ניסיון 1: הורדת אודיו באמצעות פורמט 234...")
+        val (exitCode234, file234) = executeFormat("234")
+        if ((exitCode234 == 0 || liveStopRequested.contains(taskId)) && file234 != null && file234.length() > 0L) {
+            log("[שידור חי] הורדת אודיו (פורמט 234) הצליחה!")
+            return file234
+        }
+
+        if (liveStopRequested.contains(taskId)) {
+            return file234
+        }
+
+        // Attempt 2: format 91 (or 91/95 as fallback)
+        log("[שידור חי] ניסיון פורמט 234 נכשל, עובר לניסיון 2: פורמט 91/95...")
+        rawLog("[live] format 234 failed (code $exitCode234); attempting fallback format 91/95")
+
+        val (exitCode91, file91) = executeFormat("91/95")
+        if ((exitCode91 == 0 || liveStopRequested.contains(taskId)) && file91 != null && file91.length() > 0L) {
+            // Requirement 3: Rename to <rawBase>.mp3 with renameTo, without any conversion
+            val mp3File = File(targetFolder, "${rawBase.name}.mp3")
+            if (file91.absolutePath != mp3File.absolutePath) {
+                if (mp3File.exists()) mp3File.delete()
+                if (file91.renameTo(mp3File)) {
+                    rawLog("[live] Renamed format 91 output from ${file91.name} to ${mp3File.name}")
+                    log("[שידור חי] הקובץ נשמר כ-MP3.")
+                    return mp3File
+                }
+            }
+            return file91
+        }
+
+        if (exitCode91 != 0 && !liveStopRequested.contains(taskId)) {
+            throw EngineExecutionException("yt-dlp live stream failed with code $exitCode91 for player_client=$playerClient")
+        }
+
+        return file91
     }
 
     fun stopLiveRecording(taskId: String) {

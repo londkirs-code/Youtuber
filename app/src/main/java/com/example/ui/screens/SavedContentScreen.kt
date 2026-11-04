@@ -104,6 +104,7 @@ fun SavedContentScreen(
     onLoadChannelVideos: suspend (SavedChannelEntity) -> List<SearchResultItem>,
     onDownloadVideo: (SearchResultItem, AudioQuality?) -> Unit,
     onPlayVideo: (SearchResultItem) -> Unit,
+    onOpenChannel: (channelTitle: String, channelId: String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     BackHandler { onBack() }
@@ -301,37 +302,46 @@ fun SavedContentScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Box(
-                                        contentAlignment = Alignment.Center,
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
                                         modifier = Modifier
-                                            .size(42.dp)
-                                            .background(SurfaceHighlight, CircleShape)
-                                            .clip(CircleShape)
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable { onOpenChannel(ch.channelTitle, ch.channelId) }
+                                            .padding(vertical = 2.dp)
                                     ) {
-                                        Text(
-                                            text = ch.channelTitle.take(1).uppercase(),
-                                            color = ScarletRed,
-                                            fontSize = 18.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
+                                        Box(
+                                            contentAlignment = Alignment.Center,
+                                            modifier = Modifier
+                                                .size(42.dp)
+                                                .background(SurfaceHighlight, CircleShape)
+                                                .clip(CircleShape)
+                                        ) {
+                                            Text(
+                                                text = ch.channelTitle.take(1).uppercase(),
+                                                color = ScarletRed,
+                                                fontSize = 18.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
 
-                                    Spacer(modifier = Modifier.width(10.dp))
+                                        Spacer(modifier = Modifier.width(10.dp))
 
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = ch.channelTitle,
-                                            color = TextPrimary,
-                                            fontSize = 15.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Text(
-                                            text = if (ch.notifyNewVideos) "התראות פעילות לערוץ" else "התראות מושתקות",
-                                            color = if (ch.notifyNewVideos) NeonCyan else TextSecondary,
-                                            fontSize = 11.sp
-                                        )
+                                        Column {
+                                            Text(
+                                                text = ch.channelTitle,
+                                                color = NeonCyan,
+                                                fontSize = 15.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                text = if (ch.notifyNewVideos) "התראות פעילות לערוץ (לחץ לפתיחה)" else "התראות מושתקות (לחץ לפתיחה)",
+                                                color = if (ch.notifyNewVideos) NeonCyan.copy(alpha = 0.8f) else TextSecondary,
+                                                fontSize = 11.sp
+                                            )
+                                        }
                                     }
 
                                     // Notification Bell Toggle Switch
@@ -547,10 +557,15 @@ fun SavedContentScreen(
                                     Spacer(modifier = Modifier.height(2.dp))
                                     Text(
                                         text = video.channelTitle,
-                                        color = TextSecondary,
+                                        color = NeonCyan,
                                         fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium,
                                         maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .clickable { onOpenChannel(video.channelTitle, "") }
+                                            .padding(vertical = 1.dp)
                                     )
                                 }
 

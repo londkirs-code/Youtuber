@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cancel
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
@@ -389,15 +390,41 @@ fun DownloadItemCard(
                             .verticalScroll(scrollState)
                     ) {
                         if (selectedLogTab == 1) {
-                            // Hebrew logs (Default)
-                            if (task.logs.isEmpty()) {
-                                Text(
-                                    text = "ההורדה מתבצעת... (${task.progressPercent}%)",
-                                    color = TextTertiary,
-                                    fontSize = 11.sp
-                                )
-                            } else {
-                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                // Prominent Storage Location Banner (User Requirement)
+                                val storageLocation = task.filePath ?: "ספריית המכשיר (Music/TuneVault)"
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(SurfaceDark, RoundedCornerShape(6.dp))
+                                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Folder,
+                                        contentDescription = null,
+                                        tint = NeonCyan,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "נשמר ב: $storageLocation",
+                                        color = NeonCyan,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+
+                                if (task.logs.isEmpty()) {
+                                    Text(
+                                        text = "ההורדה מתבצעת... (${task.progressPercent}%)",
+                                        color = TextTertiary,
+                                        fontSize = 11.sp,
+                                        modifier = Modifier.padding(top = 4.dp)
+                                    )
+                                } else {
                                     task.logs.forEach { logLine ->
                                         Text(
                                             text = logLine,
