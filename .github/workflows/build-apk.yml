@@ -80,6 +80,76 @@ jobs:
           echo "BUILD_VERSION_CODE=$BUILD_VERSION_CODE" >> "$GITHUB_ENV"
           echo "Next TuneVault versionCode: $BUILD_VERSION_CODE"
 
+      - name: Restore the original signing key automatically when missing or mismatched
+        shell: bash
+        run: |
+          set -euo pipefail
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -x "$APKSIGNER"
+
+          normalize_sha() {
+            printf '%s' "$1" | tr -d ':' | tr '[:upper:]' '[:lower:]'
+          }
+          cert_sha_for_keystore() {
+            keytool -list -v -keystore "$1" -storepass android -alias androiddebugkey 2>/dev/null \
+              | sed -nE 's/^[[:space:]]*SHA256:[[:space:]]*//p' | head -n 1
+          }
+
+          EXPECTED_CERT=""
+          if [ -s /tmp/TuneVault.previous.apk ]; then
+            "$APKSIGNER" verify /tmp/TuneVault.previous.apk
+            EXPECTED_CERT="$( "$APKSIGNER" verify --print-certs /tmp/TuneVault.previous.apk \
+              | sed -n 's/.*certificate SHA-256 digest: //p' | head -n 1 )"
+            test -n "$EXPECTED_CERT"
+            EXPECTED_CERT="$(normalize_sha "$EXPECTED_CERT")"
+            echo "Previous published APK certificate: $EXPECTED_CERT"
+          fi
+
+          CURRENT_OK=false
+          if [ -s debug.keystore ]; then
+            if CURRENT_CERT="$(cert_sha_for_keystore debug.keystore)" && [ -n "$CURRENT_CERT" ]; then
+              CURRENT_CERT="$(normalize_sha "$CURRENT_CERT")"
+              if [ -z "$EXPECTED_CERT" ] || [ "$CURRENT_CERT" = "$EXPECTED_CERT" ]; then
+                CURRENT_OK=true
+              fi
+            fi
+          fi
+
+          if [ "$CURRENT_OK" != true ]; then
+            echo "Signing key is missing, invalid, or does not match the published APK; searching repository history."
+            FOUND=false
+            while IFS= read -r COMMIT; do
+              [ -n "$COMMIT" ] || continue
+              if git show "$COMMIT:debug.keystore" > /tmp/TuneVault.candidate.keystore 2>/dev/null \
+                && [ -s /tmp/TuneVault.candidate.keystore ]; then
+                if CANDIDATE_CERT="$(cert_sha_for_keystore /tmp/TuneVault.candidate.keystore)" \
+                  && [ -n "$CANDIDATE_CERT" ]; then
+                  CANDIDATE_CERT="$(normalize_sha "$CANDIDATE_CERT")"
+                  if [ -z "$EXPECTED_CERT" ] || [ "$CANDIDATE_CERT" = "$EXPECTED_CERT" ]; then
+                    cp /tmp/TuneVault.candidate.keystore debug.keystore
+                    echo "Restored matching debug.keystore from commit $COMMIT"
+                    echo "Restored certificate SHA-256: $CANDIDATE_CERT"
+                    FOUND=true
+                    break
+                  fi
+                fi
+              fi
+            done < <(git log --all --format=%H -- debug.keystore)
+            if [ "$FOUND" != true ]; then
+              echo "::error::Could not find the original signing key matching the previously published APK in repository history."
+              exit 1
+            fi
+          else
+            echo "Existing signing key is valid and matches the previously published APK."
+          fi
+
+          test -s debug.keystore
+          FINAL_CERT="$(normalize_sha "$(cert_sha_for_keystore debug.keystore)")"
+          if [ -n "$EXPECTED_CERT" ]; then
+            test "$FINAL_CERT" = "$EXPECTED_CERT"
+          fi
+          echo "Signing-key preflight passed: $FINAL_CERT"
+
       - name: Build matching FFmpeg and FFprobe 9.0.2 for Android arm64
         shell: bash
         run: |
