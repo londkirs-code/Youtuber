@@ -326,6 +326,42 @@ object EngineRuntime {
         Python.getInstance().getModule("tunevault_engine").callAttr("clear_cache")
     }
 
+    suspend fun remuxAudioFile(context: Context, inputFile: File, outputFile: File): Boolean =
+        withContext(Dispatchers.IO) {
+            try {
+                if (!inputFile.exists() || inputFile.length() == 0L) return@withContext false
+                val nativeDir = File(context.applicationContext.applicationInfo.nativeLibraryDir)
+                val ffmpeg = File(nativeDir, "libffmpeg.so")
+                if (!ffmpeg.exists()) return@withContext false
+                ffmpeg.setExecutable(true, false)
+
+                if (outputFile.exists()) outputFile.delete()
+
+                val process = ProcessBuilder(
+                    ffmpeg.absolutePath,
+                    "-y",
+                    "-i", inputFile.absolutePath,
+                    "-c", "copy",
+                    "-movflags", "+faststart",
+                    outputFile.absolutePath
+                ).redirectErrorStream(true).start()
+
+                val completed = process.waitFor(45, TimeUnit.SECONDS)
+                if (!completed) {
+                    process.destroyForcibly()
+                    return@withContext false
+                }
+                val success = process.exitValue() == 0 && outputFile.exists() && outputFile.length() > 0L
+                if (success) {
+                    Log.i(TAG, "Remux successful: ${outputFile.name} (${outputFile.length()} bytes)")
+                }
+                success
+            } catch (e: Exception) {
+                Log.w(TAG, "Remux error: ${e.message}", e)
+                false
+            }
+        }
+
     private fun ensureInitialized(context: Context) {
         if (!initialized) throw IllegalStateException("Embedded yt-dlp engine is not initialized")
     }

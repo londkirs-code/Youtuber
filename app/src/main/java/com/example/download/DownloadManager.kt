@@ -64,15 +64,66 @@ class DownloadManager(private val context: Context) {
     private val liveStopRequested = ConcurrentHashMap.newKeySet<String>()
 
     private fun getDownloadFolder(settings: UserSettings): File {
-        val customName = settings.downloadFolderPath.trim()
-        val dir = if (customName.isNotBlank() && !customName.contains("Music/TuneVault") && customName != "Music") {
-            val sanitized = customName.replace(Regex("[^a-zA-Z0-9א-ת _/-]"), "")
-            File(context.getExternalFilesDir(null), sanitized)
-        } else {
-            File(context.getExternalFilesDir(null), "Music")
+        // 1. If user picked a folder via SAF DocumentTree, resolve directly to storage path if writable
+        if (settings.downloadFolderUri.isNotBlank()) {
+            try {
+                val uri = android.net.Uri.parse(settings.downloadFolderUri)
+                val docId = android.provider.DocumentsContract.getTreeDocumentId(uri)
+                val decoded = java.net.URLDecoder.decode(docId, "UTF-8")
+                if (decoded.startsWith("primary:")) {
+                    val relativePath = decoded.removePrefix("primary:").trim('/', ' ')
+                    val candidate = if (relativePath.isEmpty()) {
+                        android.os.Environment.getExternalStorageDirectory()
+                    } else {
+                        File(android.os.Environment.getExternalStorageDirectory(), relativePath)
+                    }
+                    if (candidate.exists() || candidate.mkdirs()) {
+                        val testFile = File(candidate, ".tv_test_${System.currentTimeMillis()}")
+                        if (testFile.createNewFile()) {
+                            testFile.delete()
+                            return candidate
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Cannot write directly to SAF resolved directory: ${e.message}")
+            }
         }
-        if (!dir.exists()) dir.mkdirs()
-        return dir
+
+        // 2. Custom name provided as a path
+        val customName = settings.downloadFolderPath.trim()
+        if (customName.isNotBlank() && !customName.contains("Music/TuneVault") && customName != "Music") {
+            try {
+                val candidate = File(android.os.Environment.getExternalStorageDirectory(), customName)
+                if (candidate.exists() || candidate.mkdirs()) {
+                    val testFile = File(candidate, ".tv_test_${System.currentTimeMillis()}")
+                    if (testFile.createNewFile()) {
+                        testFile.delete()
+                        return candidate
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        // 3. Public Music/TuneVault on external storage
+        try {
+            val publicMusic = File(
+                android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC),
+                "TuneVault"
+            )
+            if (publicMusic.exists() || publicMusic.mkdirs()) {
+                val testFile = File(publicMusic, ".tv_test_${System.currentTimeMillis()}")
+                if (testFile.createNewFile()) {
+                    testFile.delete()
+                    return publicMusic
+                }
+            }
+        } catch (_: Exception) {}
+
+        // 4. Fallback to app-specific external files dir
+        val fallback = File(context.getExternalFilesDir(null), "Music")
+        if (!fallback.exists()) fallback.mkdirs()
+        return fallback
     }
 
     private fun isWifiConnected(): Boolean {
@@ -97,11 +148,12 @@ class DownloadManager(private val context: Context) {
         val rawBase = File(targetFolder, "${sanitizedTitle}_raw_${System.currentTimeMillis()}")
         val initialFilePath = rawBase.absolutePath + ".m4a"
 
-        val destinationNote = if (settings.downloadFolderUri.isNotBlank()) {
-            "נשמר ב: ${settings.downloadFolderPath} (${targetFolder.absolutePath})"
+        val folderLabel = if (settings.downloadFolderUri.isNotBlank()) {
+            settings.downloadFolderPath.ifBlank { targetFolder.name }
         } else {
-            "נשמר ב: ${targetFolder.absolutePath}"
+            targetFolder.name
         }
+        val destinationNote = "נשמר ב: $folderLabel (${targetFolder.absolutePath})"
 
         val newTask = DownloadTask(
             id = taskId,
@@ -408,7 +460,19 @@ class DownloadManager(private val context: Context) {
                 }
             }
 
-            if (finalFile == downloadedRawFile) {
+            if (isLive) {
+                updateState(DownloadStatus.FINISHING, hebrewStatus = "מעבד ומשלים את קובץ ההקלטה...")
+                val fixedLiveFile = File(targetFolder, "${rawBase.nameWithoutExtension}_live.$ext")
+                val remuxSuccess = EngineRuntime.remuxAudioFile(context, downloadedRawFile, fixedLiveFile)
+                if (remuxSuccess && fixedLiveFile.exists() && fixedLiveFile.length() > 0L) {
+                    downloadedRawFile.delete()
+                    finalFile = fixedLiveFile
+                    log("[שידור חי] קובץ ההקלטה עובד בהצלחה עם תגיות זמן מדויקות!")
+                } else if (finalFile == downloadedRawFile) {
+                    val cleanFile = File(targetFolder, "${rawBase.nameWithoutExtension}.$ext")
+                    if (downloadedRawFile.renameTo(cleanFile)) finalFile = cleanFile
+                }
+            } else if (finalFile == downloadedRawFile) {
                 val cleanFile = File(targetFolder, "${rawBase.nameWithoutExtension}.$ext")
                 if (downloadedRawFile.renameTo(cleanFile)) finalFile = cleanFile
             }
@@ -416,13 +480,20 @@ class DownloadManager(private val context: Context) {
             updateState(DownloadStatus.FINISHING, progress = 100, hebrewStatus = "שומר בספרייה...")
 
             val fullDurationMs = fileDurationMs(finalFile)
-            val durationToSave = if (isTrimmed && trimRange != null) {
+            val durationToSave = if (isLive) {
+                val recordedSec = _tasks.value.find { it.id == taskId }?.recordedDurationSeconds ?: 0L
+                val recordedMs = recordedSec * 1000L
+                if (fullDurationMs > 5000L && fullDurationMs >= (recordedMs * 0.85).toLong()) {
+                    fullDurationMs
+                } else if (recordedMs > 0L) {
+                    recordedMs
+                } else {
+                    fullDurationMs.coerceAtLeast(1000L)
+                }
+            } else if (isTrimmed && trimRange != null) {
                 (trimRange.endMs - trimRange.startMs)
             } else if (fullDurationMs > 0L) {
                 fullDurationMs
-            } else if (isLive) {
-                val taskSec = _tasks.value.find { it.id == taskId }?.recordedDurationSeconds ?: 0L
-                if (taskSec > 0L) taskSec * 1000L else 0L
             } else {
                 0L
             }
@@ -631,18 +702,7 @@ class DownloadManager(private val context: Context) {
         log("[שידור חי] מתחיל הקלטה ישירה של זרם HLS...")
         updateState(DownloadStatus.RECORDING_LIVE, 0, "LIVE", "0 MB", "LIVE", "מקליט שידור חי...", 0L)
 
-        val ticker = scope.launch {
-            var sec = 0L
-            while (isActive) {
-                delay(1000)
-                sec++
-                updateState(
-                    DownloadStatus.RECORDING_LIVE, -1, "LIVE", null, "LIVE",
-                    "מקליט שידור חי: ${formatDuration(sec * 1000L)}", sec
-                )
-            }
-        }
-
+        var lastReportedAudioSec = -1L
         val liveCallback = object : YtDlpBridgeCallback {
             override fun onLog(level: String, message: String) {
                 rawLog("[$level] $message")
@@ -651,7 +711,22 @@ class DownloadManager(private val context: Context) {
                 }
             }
 
-            override fun onProgress(percent: Double, downloadedBytes: Long, totalBytes: Long, speed: String, etaSeconds: Long) {}
+            override fun onProgress(percent: Double, downloadedBytes: Long, totalBytes: Long, speed: String, etaSeconds: Long) {
+                val audioSec = etaSeconds.coerceAtLeast(0L)
+                if (audioSec != lastReportedAudioSec) {
+                    lastReportedAudioSec = audioSec
+                    val downloadedText = bytesToText(downloadedBytes)
+                    updateState(
+                        DownloadStatus.RECORDING_LIVE,
+                        -1,
+                        "LIVE",
+                        downloadedText,
+                        "LIVE",
+                        "מקליט שידור חי: ${formatDuration(audioSec * 1000L)} ($downloadedText)",
+                        audioSec
+                    )
+                }
+            }
 
             override fun isCancelled(): Boolean = liveStopRequested.contains(taskId)
         }
@@ -678,8 +753,6 @@ class DownloadManager(private val context: Context) {
             } else {
                 throw error
             }
-        } finally {
-            ticker.cancel()
         }
 
         val producedLiveFile = findOutputFile()
@@ -695,6 +768,11 @@ class DownloadManager(private val context: Context) {
     }
 
     fun cancelDownload(taskId: String) {
+        val task = _tasks.value.find { it.id == taskId }
+        if (task?.isLiveStream == true && task.status == DownloadStatus.RECORDING_LIVE) {
+            stopLiveRecording(taskId)
+            return
+        }
         liveStopRequested.remove(taskId)
         EngineRuntime.cancel(taskId)
         activeJobs[taskId]?.cancel()

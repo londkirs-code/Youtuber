@@ -432,6 +432,7 @@ def download_live_hls(url, player_client="default", out_base="", callback=None):
         last_init_uri = None
         total_bytes_written = 0
         total_segments_written = 0
+        total_audio_duration_sec = 0.0
         consecutive_playlist_errors = 0
 
         try:
@@ -492,21 +493,28 @@ def download_live_hls(url, player_client="default", out_base="", callback=None):
                     except Exception as e:
                         _emit(callback, "WARNING", f"[live-hls] Failed fetching init segment: {e}")
 
-                # Extract segments
+                # Extract segments with individual #EXTINF durations
                 curr_seq = media_seq
                 segments = []
                 for i, line in enumerate(p_lines):
                     if line.startswith("#EXTINF:"):
+                        seg_dur = target_duration
+                        try:
+                            raw_dur = line[8:].split(",")[0].strip()
+                            seg_dur = float(raw_dur)
+                        except Exception:
+                            seg_dur = target_duration
+
                         for next_line in p_lines[i + 1:]:
                             if next_line and not next_line.startswith("#"):
-                                segments.append((curr_seq, next_line))
+                                segments.append((curr_seq, next_line, seg_dur))
                                 curr_seq += 1
                                 break
 
                 # On first cycle: start from the first segment currently in playlist
                 new_segments = [s for s in segments if s[0] > last_written_seq]
 
-                for seg_seq, seg_rel_url in new_segments:
+                for seg_seq, seg_rel_url, seg_dur in new_segments:
                     _check_cancel(callback)
                     full_seg_url = urljoin(m3u8_url, seg_rel_url)
                     seg_bytes = None
@@ -525,9 +533,18 @@ def download_live_hls(url, player_client="default", out_base="", callback=None):
                         out_file.flush()
                         total_bytes_written += len(seg_bytes)
                         total_segments_written += 1
+                        total_audio_duration_sec += seg_dur
                         last_written_seq = seg_seq
+
+                        if callback:
+                            try:
+                                audio_sec_int = int(total_audio_duration_sec)
+                                callback.onProgress(0.0, total_bytes_written, 0, f"{audio_sec_int}s", audio_sec_int)
+                            except Exception:
+                                pass
+
                         if total_segments_written % 5 == 0 or total_segments_written <= 3:
-                            _emit(callback, "INFO", f"[live-hls] Segments: {total_segments_written}, Size: {total_bytes_written // 1024} KB")
+                            _emit(callback, "INFO", f"[live-hls] Audio: {int(total_audio_duration_sec)}s ({total_segments_written} segments), Size: {total_bytes_written // 1024} KB")
 
                 if is_endlist:
                     _emit(callback, "INFO", "[live-hls] Stream ended (#EXT-X-ENDLIST). Finishing recording.")
@@ -544,7 +561,7 @@ def download_live_hls(url, player_client="default", out_base="", callback=None):
 
         except RuntimeError as e:
             if "TUNEVault_CANCELLED" in str(e):
-                _emit(callback, "INFO", f"[live-hls] Recording stopped by user. Total: {total_segments_written} segments, {total_bytes_written} bytes.")
+                _emit(callback, "INFO", f"[live-hls] Recording stopped by user. Total audio: {int(total_audio_duration_sec)}s ({total_segments_written} segments), {total_bytes_written} bytes.")
                 raise
             raise
         finally:
@@ -554,11 +571,12 @@ def download_live_hls(url, player_client="default", out_base="", callback=None):
             except Exception:
                 pass
 
-        _emit(callback, "INFO", f"[live-hls] Recording finished: {out_path} ({total_bytes_written} bytes)")
+        _emit(callback, "INFO", f"[live-hls] Recording finished: {out_path} ({int(total_audio_duration_sec)}s audio, {total_bytes_written} bytes)")
         return json.dumps({
             "path": out_path,
             "format_id": chosen_fmt.get("format_id"),
             "bytes": total_bytes_written,
-            "segments": total_segments_written
+            "segments": total_segments_written,
+            "duration_sec": total_audio_duration_sec
         })
 

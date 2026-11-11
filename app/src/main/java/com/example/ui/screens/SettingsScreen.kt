@@ -103,6 +103,10 @@ fun SettingsScreen(
             } catch (e: Exception) {
                 android.util.Log.w("SettingsScreen", "Failed to persist URI permission", e)
             }
+            val resolvedName = resolveFolderDisplayName(context, uri.toString(), "")
+            if (resolvedName.isNotBlank()) {
+                onFolderChanged(resolvedName)
+            }
             onFolderUriChanged(uri.toString())
         }
     }
@@ -199,7 +203,7 @@ fun SettingsScreen(
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Medium
                             )
-                            val displayPath = formatFolderDisplayName(settings.downloadFolderUri, settings.downloadFolderPath)
+                            val displayPath = formatFolderDisplayName(context, settings.downloadFolderUri, settings.downloadFolderPath)
                             Text(
                                 text = displayPath,
                                 color = NeonCyan,
@@ -672,22 +676,49 @@ private fun SectionHeader(title: String) {
     )
 }
 
-private fun formatFolderDisplayName(folderUri: String, fallbackPath: String): String {
-    if (folderUri.isBlank()) return fallbackPath
+fun resolveFolderDisplayName(context: android.content.Context, folderUri: String, fallbackPath: String): String {
+    if (folderUri.isBlank()) return fallbackPath.ifBlank { "תיקיית המוזיקה (Music/TuneVault)" }
+    try {
+        val uri = android.net.Uri.parse(folderUri)
+        val docId = android.provider.DocumentsContract.getTreeDocumentId(uri)
+        val docUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(uri, docId)
+        context.contentResolver.query(
+            docUri,
+            arrayOf(android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME),
+            null,
+            null,
+            null
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val idx = cursor.getColumnIndex(android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                if (idx >= 0) {
+                    val name = cursor.getString(idx)
+                    if (!name.isNullOrBlank()) return name
+                }
+            }
+        }
+    } catch (_: Exception) {}
+
     return try {
         val uri = android.net.Uri.parse(folderUri)
         val docId = android.provider.DocumentsContract.getTreeDocumentId(uri)
         val decoded = java.net.URLDecoder.decode(docId, "UTF-8")
-        val cleanName = decoded.substringAfterLast(":").substringAfterLast("/")
-        if (cleanName.isNotBlank()) "תיקייה נבחרה במכשיר: $cleanName" else "תיקייה נבחרה במכשיר: $decoded"
+        val clean = decoded.substringAfterLast(":").trim('/', ' ')
+        if (clean.isNotBlank()) clean else decoded
     } catch (_: Exception) {
         try {
-            val part = folderUri.substringAfterLast("%2F").substringAfterLast("%3A").substringAfterLast("/")
-            val decoded = java.net.URLDecoder.decode(part, "UTF-8")
-            "תיקייה נבחרה במכשיר: $decoded"
+            val decoded = java.net.URLDecoder.decode(folderUri, "UTF-8")
+            val part = decoded.substringAfterLast("%2F").substringAfterLast("/").substringAfterLast(":")
+            if (part.isNotBlank()) part else fallbackPath.ifBlank { "תיקייה במכשיר" }
         } catch (_: Exception) {
-            fallbackPath
+            fallbackPath.ifBlank { "תיקייה במכשיר" }
         }
     }
+}
+
+private fun formatFolderDisplayName(context: android.content.Context, folderUri: String, fallbackPath: String): String {
+    if (folderUri.isBlank()) return fallbackPath.ifBlank { "תיקיית המוזיקה (Music/TuneVault)" }
+    val resolved = resolveFolderDisplayName(context, folderUri, fallbackPath)
+    return "תיקייה נבחרה במכשיר: $resolved"
 }
 
