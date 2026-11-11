@@ -297,3 +297,268 @@ def clear_cache():
     if _CACHE_DIR:
         os.makedirs(_CACHE_DIR, exist_ok=True)
     return True
+
+
+def download_live_hls(url, player_client="default", out_base="", callback=None):
+    """Download HLS live stream segments directly in Python without FFmpeg network dependency."""
+    import time
+    from urllib.parse import urljoin
+    from yt_dlp.networking import Request
+
+    ytdlp = _yt_dlp()
+    options = _runtime_options()
+    options.update({
+        "quiet": True,
+        "no_warnings": False,
+        "noplaylist": True,
+        "check_formats": False,
+        "logger": _Logger(callback),
+        "extractor_args": {"youtube": {"player_client": [player_client]}},
+    })
+
+    _emit(callback, "INFO", f"[live-hls] Extracting live stream info using player_client={player_client}...")
+    with ytdlp.YoutubeDL(options) as downloader:
+        _check_cancel(callback)
+        info = downloader.extract_info(url, download=False)
+        if not info:
+            raise RuntimeError("yt-dlp returned no stream information")
+
+        m3u8_formats = [
+            f for f in (info.get("formats") or [])
+            if str(f.get("protocol") or "").startswith("m3u8")
+        ]
+        available_ids = [str(f.get("format_id")) for f in m3u8_formats]
+        _emit(callback, "INFO", f"[live-hls] Available m3u8 formats: {', '.join(available_ids) if available_ids else 'none'}")
+
+        chosen_fmt = None
+        out_ext = "m4a"
+
+        # 1. Priority 1: format_id == "234" (audio only) -> .m4a
+        for f in m3u8_formats:
+            if str(f.get("format_id")) == "234":
+                chosen_fmt = f
+                out_ext = "m4a"
+                break
+
+        # 2. Priority 2: 91, then 92-96 or 95 (video+audio) -> .mp3
+        if not chosen_fmt:
+            for fid in ["91", "92", "93", "94", "95", "96"]:
+                for f in m3u8_formats:
+                    if str(f.get("format_id")) == fid:
+                        chosen_fmt = f
+                        out_ext = "mp3"
+                        break
+                if chosen_fmt:
+                    break
+
+        # 3. Priority 3: any m3u8 format with audio -> .mp3
+        if not chosen_fmt:
+            for f in m3u8_formats:
+                if f.get("acodec") != "none":
+                    chosen_fmt = f
+                    out_ext = "mp3"
+                    break
+
+        if not chosen_fmt and m3u8_formats:
+            chosen_fmt = m3u8_formats[0]
+            out_ext = "mp3"
+
+        if not chosen_fmt:
+            raise RuntimeError(f"No m3u8 live formats found among: {available_ids}")
+
+        _emit(callback, "INFO", f"[live-hls] Selected format {chosen_fmt.get('format_id')} -> saving as .{out_ext}")
+
+        m3u8_url = chosen_fmt.get("url")
+        http_headers = chosen_fmt.get("http_headers") or {}
+
+        def _fetch(req_url):
+            try:
+                req = Request(req_url, headers=http_headers)
+                res = downloader.urlopen(req)
+                return res.read()
+            except Exception as e:
+                status_code = getattr(e, "code", None) or getattr(e, "status", None)
+                err_detail = ""
+                try:
+                    if hasattr(e, "read"):
+                        err_detail = e.read().decode("utf-8", errors="replace")[:400]
+                    elif hasattr(e, "response") and hasattr(e.response, "read"):
+                        err_detail = e.response.read().decode("utf-8", errors="replace")[:400]
+                except Exception:
+                    pass
+                msg = f"HTTP {status_code}: {e}" if status_code else str(e)
+                if err_detail:
+                    msg += f" | Body: {err_detail.strip()}"
+                _emit(callback, "WARNING", f"[live-hls] Network fetch failed for {req_url.split('?')[0]}: {msg}")
+                raise
+
+        # Check initial playlist
+        clean_url = m3u8_url.split("?")[0] if m3u8_url else ""
+        _emit(callback, "INFO", f"[live-hls] Initial playlist: {clean_url}")
+
+        raw_playlist = _fetch(m3u8_url)
+        playlist_text = raw_playlist.decode("utf-8", errors="replace")
+        preview_lines = [l.strip() for l in playlist_text.splitlines() if l.strip()][:15]
+        if preview_lines:
+            _emit(callback, "INFO", f"[live-hls] Playlist preview (15 lines):\n" + "\n".join(preview_lines))
+        else:
+            _emit(callback, "WARNING", "[live-hls] Initial playlist returned empty content!")
+
+        # Check if master playlist (#EXT-X-STREAM-INF)
+        if "#EXT-X-STREAM-INF" in playlist_text:
+            lines = [l.strip() for l in playlist_text.splitlines()]
+            variant_url = None
+            for i, line in enumerate(lines):
+                if line.startswith("#EXT-X-STREAM-INF"):
+                    for next_line in lines[i + 1:]:
+                        if next_line and not next_line.startswith("#"):
+                            variant_url = urljoin(m3u8_url, next_line)
+                            break
+                    if variant_url:
+                        break
+            if variant_url:
+                m3u8_url = variant_url
+                _emit(callback, "INFO", f"[live-hls] Selected master variant: {m3u8_url.split('?')[0]}")
+
+        out_path = f"{out_base}.{out_ext}"
+        if os.path.exists(out_path):
+            try:
+                os.remove(out_path)
+            except Exception:
+                pass
+
+        out_file = open(out_path, "ab")
+        last_written_seq = -1
+        last_init_uri = None
+        total_bytes_written = 0
+        total_segments_written = 0
+        consecutive_playlist_errors = 0
+
+        try:
+            while True:
+                _check_cancel(callback)
+
+                # Fetch media playlist
+                try:
+                    p_bytes = _fetch(m3u8_url)
+                    p_text = p_bytes.decode("utf-8", errors="replace")
+                    consecutive_playlist_errors = 0
+                except Exception as err:
+                    consecutive_playlist_errors += 1
+                    _emit(callback, "WARNING", f"[live-hls] Playlist refresh failed ({consecutive_playlist_errors}/5): {err}")
+                    if consecutive_playlist_errors >= 5:
+                        if total_bytes_written > 0:
+                            _emit(callback, "INFO", f"[live-hls] Playlist unavailable 5 times; finishing with {total_bytes_written} bytes.")
+                            break
+                        raise RuntimeError(f"Failed to fetch live playlist 5 times in a row: {err}")
+                    time.sleep(1.0)
+                    continue
+
+                target_duration = 2.0
+                media_seq = 0
+                init_uri = None
+                p_lines = [l.strip() for l in p_text.splitlines()]
+                is_endlist = False
+
+                for line in p_lines:
+                    if line.startswith("#EXT-X-TARGETDURATION:"):
+                        try:
+                            target_duration = float(line.split(":")[1])
+                        except Exception:
+                            pass
+                    elif line.startswith("#EXT-X-MEDIA-SEQUENCE:"):
+                        try:
+                            media_seq = int(line.split(":")[1])
+                        except Exception:
+                            pass
+                    elif line.startswith("#EXT-X-MAP:"):
+                        m = re.search(r'URI="?([^",]+)"?', line)
+                        if m:
+                            init_uri = m.group(1)
+                    elif line.startswith("#EXT-X-ENDLIST"):
+                        is_endlist = True
+
+                # Download init segment if present and changed/new
+                if init_uri and init_uri != last_init_uri:
+                    full_init_url = urljoin(m3u8_url, init_uri)
+                    _emit(callback, "INFO", f"[live-hls] Fetching init segment: {full_init_url.split('?')[0]}")
+                    try:
+                        init_bytes = _fetch(full_init_url)
+                        if init_bytes:
+                            out_file.write(init_bytes)
+                            out_file.flush()
+                            total_bytes_written += len(init_bytes)
+                            last_init_uri = init_uri
+                    except Exception as e:
+                        _emit(callback, "WARNING", f"[live-hls] Failed fetching init segment: {e}")
+
+                # Extract segments
+                curr_seq = media_seq
+                segments = []
+                for i, line in enumerate(p_lines):
+                    if line.startswith("#EXTINF:"):
+                        for next_line in p_lines[i + 1:]:
+                            if next_line and not next_line.startswith("#"):
+                                segments.append((curr_seq, next_line))
+                                curr_seq += 1
+                                break
+
+                # On first cycle: start from the first segment currently in playlist
+                new_segments = [s for s in segments if s[0] > last_written_seq]
+
+                for seg_seq, seg_rel_url in new_segments:
+                    _check_cancel(callback)
+                    full_seg_url = urljoin(m3u8_url, seg_rel_url)
+                    seg_bytes = None
+                    for attempt in range(3):
+                        _check_cancel(callback)
+                        try:
+                            seg_bytes = _fetch(full_seg_url)
+                            if seg_bytes:
+                                break
+                        except Exception as e:
+                            _emit(callback, "WARNING", f"[live-hls] Segment {seg_seq} failed (attempt {attempt + 1}/3): {e}")
+                            time.sleep(0.5)
+
+                    if seg_bytes:
+                        out_file.write(seg_bytes)
+                        out_file.flush()
+                        total_bytes_written += len(seg_bytes)
+                        total_segments_written += 1
+                        last_written_seq = seg_seq
+                        if total_segments_written % 5 == 0 or total_segments_written <= 3:
+                            _emit(callback, "INFO", f"[live-hls] Segments: {total_segments_written}, Size: {total_bytes_written // 1024} KB")
+
+                if is_endlist:
+                    _emit(callback, "INFO", "[live-hls] Stream ended (#EXT-X-ENDLIST). Finishing recording.")
+                    break
+
+                # Sleep half of target duration (max 2s), in 0.5s ticks checking cancel
+                sleep_sec = min(2.0, max(0.5, target_duration / 2.0))
+                elapsed = 0.0
+                while elapsed < sleep_sec:
+                    _check_cancel(callback)
+                    tick = min(0.5, sleep_sec - elapsed)
+                    time.sleep(tick)
+                    elapsed += tick
+
+        except RuntimeError as e:
+            if "TUNEVault_CANCELLED" in str(e):
+                _emit(callback, "INFO", f"[live-hls] Recording stopped by user. Total: {total_segments_written} segments, {total_bytes_written} bytes.")
+                raise
+            raise
+        finally:
+            try:
+                out_file.flush()
+                out_file.close()
+            except Exception:
+                pass
+
+        _emit(callback, "INFO", f"[live-hls] Recording finished: {out_path} ({total_bytes_written} bytes)")
+        return json.dumps({
+            "path": out_path,
+            "format_id": chosen_fmt.get("format_id"),
+            "bytes": total_bytes_written,
+            "segments": total_segments_written
+        })
+

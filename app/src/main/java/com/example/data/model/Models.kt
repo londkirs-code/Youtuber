@@ -1,5 +1,8 @@
 package com.example.data.model
 
+import androidx.compose.runtime.Immutable
+
+@Immutable
 data class SearchResultItem(
     val id: String,
     val title: String,
@@ -24,6 +27,7 @@ enum class DownloadStatus {
     RECORDING_LIVE
 }
 
+@Immutable
 data class DownloadTask(
     val id: String,
     val videoId: String,
@@ -45,6 +49,7 @@ data class DownloadTask(
     val recordedDurationSeconds: Long = 0L
 )
 
+@Immutable
 data class TrimRange(
     val startMs: Long,
     val endMs: Long,
@@ -57,6 +62,7 @@ enum class AudioQuality(val labelHebrew: String, val bitrateText: String) {
     NORMAL("איכות חסכונית (M4A)", "96 kbps")
 }
 
+@Immutable
 data class UserSettings(
     val allowCellularDownloads: Boolean = true,
     val isDarkMode: Boolean = true,

@@ -116,6 +116,26 @@ fun SearchScreen(
 
     var selectedDetailItem by remember { mutableStateOf<SearchResultItem?>(null) }
 
+    // Precomputed O(1) in-memory lookup sets & maps to eliminate disk I/O and quadratic scans during list composition
+    val savedVideoIds = remember(savedVideos) { savedVideos.map { it.id }.toHashSet() }
+    val savedChannelTitles = remember(savedChannels) { savedChannels.map { it.channelTitle }.toHashSet() }
+    val downloadedTracksMap = remember(tracks) {
+        val map = HashMap<String, TrackEntity>()
+        for (t in tracks) {
+            if (!t.isPartial) {
+                if (t.videoId.isNotBlank()) map[t.videoId] = t
+                map[t.id] = t
+            }
+        }
+        map
+    }
+    val partialTrackIds = remember(tracks) {
+        tracks.filter { it.isPartial }.map { it.videoId.ifEmpty { it.id } }.toHashSet()
+    }
+    val downloadTasksMap = remember(downloadTasks) {
+        downloadTasks.associateBy { it.videoId }
+    }
+
     fun copyUrl(videoId: String) {
         clipboardManager.setText(AnnotatedString("https://www.youtube.com/watch?v=$videoId"))
         Toast.makeText(context, "הקישור הועתק ללוח", Toast.LENGTH_SHORT).show()
@@ -217,17 +237,14 @@ fun SearchScreen(
                         items = searchResults,
                         key = { it.id }
                     ) { item ->
-                        val isVideoSaved = savedVideos.any { it.id == item.id }
-                        val isChannelSaved = savedChannels.any { it.channelTitle == item.channelTitle }
+                        val isVideoSaved = item.id in savedVideoIds
+                        val isChannelSaved = item.channelTitle in savedChannelTitles
 
-                        val downloadedTrack = tracks.firstOrNull {
-                            (it.id == item.id || it.videoId == item.id || it.thumbnailUrl.contains(item.id)) &&
-                            !it.isPartial && File(it.filePath).exists() && File(it.filePath).length() > 0
-                        }
-                        val downloadTask = downloadTasks.firstOrNull { it.videoId == item.id }
+                        val downloadedTrack = downloadedTracksMap[item.id]
+                        val downloadTask = downloadTasksMap[item.id]
                         val isDownloaded = downloadedTrack != null || downloadTask?.status == DownloadStatus.COMPLETED
                         val isDownloading = downloadTask != null && (downloadTask.status == DownloadStatus.DOWNLOADING || downloadTask.status == DownloadStatus.CONNECTING || downloadTask.status == DownloadStatus.TRIMMING || downloadTask.status == DownloadStatus.QUEUED)
-                        val isPartial = !isDownloaded && !isDownloading && (tracks.any { (it.id == item.id || it.videoId == item.id || it.thumbnailUrl.contains(item.id)) && it.isPartial } || downloadTask?.status == DownloadStatus.FAILED)
+                        val isPartial = !isDownloaded && !isDownloading && (item.id in partialTrackIds || downloadTask?.status == DownloadStatus.FAILED)
                         val downloadProgress = downloadTask?.progressPercent ?: 0
 
                         VideoResultCard(
@@ -243,12 +260,8 @@ fun SearchScreen(
                             onShareUrl = { shareUrl(item.id, item.title) },
                             onDownload = { onDownload(item, null) },
                             onPlay = {
-                                if (downloadedTrack != null) {
-                                    onPlayTrack(downloadedTrack)
-                                } else {
-                                    val matched = tracks.firstOrNull { it.id == item.id || it.videoId == item.id || it.thumbnailUrl.contains(item.id) }
-                                    if (matched != null) onPlayTrack(matched)
-                                }
+                                val trackToPlay = downloadedTrack ?: downloadedTracksMap[item.id]
+                                if (trackToPlay != null) onPlayTrack(trackToPlay)
                             },
                             onTrim = { onTrim(item) },
                             onToggleSaveVideo = { onToggleSaveVideo(item) },
@@ -359,16 +372,13 @@ fun SearchScreen(
                                 uploadedText = "שמור",
                                 isLive = sv.isLive
                             )
-                            val isChannelSaved = savedChannels.any { it.channelTitle == sv.channelTitle }
+                            val isChannelSaved = sv.channelTitle in savedChannelTitles
 
-                            val downloadedTrack = tracks.firstOrNull {
-                                (it.id == sv.id || it.videoId == sv.id || it.thumbnailUrl.contains(sv.id)) &&
-                                !it.isPartial && File(it.filePath).exists() && File(it.filePath).length() > 0
-                            }
-                            val downloadTask = downloadTasks.firstOrNull { it.videoId == sv.id }
+                            val downloadedTrack = downloadedTracksMap[sv.id]
+                            val downloadTask = downloadTasksMap[sv.id]
                             val isDownloaded = downloadedTrack != null || downloadTask?.status == DownloadStatus.COMPLETED
                             val isDownloading = downloadTask != null && (downloadTask.status == DownloadStatus.DOWNLOADING || downloadTask.status == DownloadStatus.CONNECTING || downloadTask.status == DownloadStatus.TRIMMING || downloadTask.status == DownloadStatus.QUEUED)
-                            val isPartial = !isDownloaded && !isDownloading && (tracks.any { (it.id == sv.id || it.videoId == sv.id || it.thumbnailUrl.contains(sv.id)) && it.isPartial } || downloadTask?.status == DownloadStatus.FAILED)
+                            val isPartial = !isDownloaded && !isDownloading && (sv.id in partialTrackIds || downloadTask?.status == DownloadStatus.FAILED)
                             val downloadProgress = downloadTask?.progressPercent ?: 0
 
                             VideoResultCard(
@@ -384,12 +394,8 @@ fun SearchScreen(
                                 onShareUrl = { shareUrl(resultItem.id, resultItem.title) },
                                 onDownload = { onDownload(resultItem, null) },
                                 onPlay = {
-                                    if (downloadedTrack != null) {
-                                        onPlayTrack(downloadedTrack)
-                                    } else {
-                                        val matched = tracks.firstOrNull { it.id == sv.id || it.videoId == sv.id || it.thumbnailUrl.contains(sv.id) }
-                                        if (matched != null) onPlayTrack(matched)
-                                    }
+                                    val trackToPlay = downloadedTrack ?: downloadedTracksMap[sv.id]
+                                    if (trackToPlay != null) onPlayTrack(trackToPlay)
                                 },
                                 onTrim = { onTrim(resultItem) },
                                 onToggleSaveVideo = { onToggleSaveVideo(resultItem) },

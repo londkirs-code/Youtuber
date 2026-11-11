@@ -167,6 +167,37 @@ object EngineRuntime {
         }
     }
 
+    suspend fun downloadLiveHls(
+        context: Context,
+        taskId: String,
+        url: String,
+        playerClient: String,
+        outBase: String,
+        callback: YtDlpBridgeCallback
+    ): String = withContext(Dispatchers.IO) {
+        ensureInitialized(context)
+        val cancellation = AtomicBoolean(false)
+        activeCancellations[taskId] = cancellation
+        val bridge = object : YtDlpBridgeCallback {
+            override fun onLog(level: String, message: String) = callback.onLog(level, message)
+            override fun onProgress(percent: Double, downloadedBytes: Long, totalBytes: Long, speed: String, etaSeconds: Long) =
+                callback.onProgress(percent, downloadedBytes, totalBytes, speed, etaSeconds)
+            override fun isCancelled(): Boolean = cancellation.get() || callback.isCancelled()
+        }
+        try {
+            Python.getInstance().getModule("tunevault_engine")
+                .callAttr("download_live_hls", url, playerClient, outBase, bridge)
+                .toJava(String::class.java)
+        } catch (error: PyException) {
+            if (bridge.isCancelled() || error.message.orEmpty().contains("TUNEVault_CANCELLED")) {
+                throw EngineCancelledException()
+            }
+            throw EngineExecutionException(error.message ?: "Live HLS download failed", error)
+        } finally {
+            activeCancellations.remove(taskId)
+        }
+    }
+
     fun cancel(taskId: String) {
         activeCancellations[taskId]?.set(true)
     }

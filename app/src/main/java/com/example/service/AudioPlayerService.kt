@@ -318,7 +318,7 @@ class AudioPlayerService : Service() {
                         _currentPositionMs.value = player.currentPosition.toLong()
                     }
                 }
-                delay(300)
+                delay(500)
             }
         }
     }

@@ -32,6 +32,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -171,12 +173,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // Downloads from DownloadManager
     val downloadTasks: StateFlow<List<DownloadTask>> = downloadManager.tasks
 
+    // Distinct count of active downloads to prevent tab badge from triggering root recompositions on every byte downloaded
+    val activeDownloadsCount: StateFlow<Int> = downloadManager.tasks
+        .map { tasks -> tasks.count { it.status != com.example.data.model.DownloadStatus.COMPLETED && it.status != com.example.data.model.DownloadStatus.FAILED } }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
     // Player Service connection
     private var playerService: AudioPlayerService? = null
     private val _isPlayerBound = MutableStateFlow(false)
 
     private val _currentTrack = MutableStateFlow<TrackEntity?>(null)
     val currentTrack: StateFlow<TrackEntity?> = _currentTrack.asStateFlow()
+
+    // Distinct boolean for mini player presence to avoid root recompositions during playback ticks
+    val hasCurrentTrack: StateFlow<Boolean> = _currentTrack
+        .map { it != null }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     private val _isPlaying = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()

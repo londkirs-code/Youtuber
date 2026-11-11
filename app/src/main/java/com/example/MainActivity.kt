@@ -38,17 +38,17 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.model.DownloadStatus
 import com.example.notify.Notifier
 import com.example.ui.components.AudioTrimmerDialog
@@ -68,7 +68,6 @@ import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.ui.theme.TuneVaultTheme
 import com.example.viewmodel.MainViewModel
-
 import androidx.compose.material.icons.filled.Bookmark
 
 class MainActivity : ComponentActivity() {
@@ -92,7 +91,7 @@ class MainActivity : ComponentActivity() {
         handleIncomingShareIntent(intent)
 
         setContent {
-            val settings by viewModel.settings.collectAsState()
+            val settings by viewModel.settings.collectAsStateWithLifecycle()
 
             TuneVaultTheme(
                 isDarkMode = settings.isDarkMode,
@@ -152,38 +151,16 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun MainAppScreen(viewModel: MainViewModel) {
-    val currentTab by viewModel.currentTab.collectAsState()
-    val searchQuery by viewModel.searchQuery.collectAsState()
-    val searchSuggestions by viewModel.searchSuggestions.collectAsState()
-    val searchResults by viewModel.searchResults.collectAsState()
-    val searchHistory by viewModel.searchHistory.collectAsState()
-    val savedVideos by viewModel.savedVideos.collectAsState()
-    val savedChannels by viewModel.savedChannels.collectAsState()
-    val isSearching by viewModel.isSearching.collectAsState()
+    // Only collect high-level routing & visibility states here.
+    // Heavy collections and 300ms playback position ticks are isolated to child host composables.
+    val currentTab by viewModel.currentTab.collectAsStateWithLifecycle()
+    val activeDownloadsCount by viewModel.activeDownloadsCount.collectAsStateWithLifecycle()
+    val hasCurrentTrack by viewModel.hasCurrentTrack.collectAsStateWithLifecycle()
 
-    val downloadTasks by viewModel.downloadTasks.collectAsState()
-    val tracks by viewModel.tracks.collectAsState()
-    val playlists by viewModel.playlists.collectAsState()
-    val settings by viewModel.settings.collectAsState()
+    val trimTarget by viewModel.trimTarget.collectAsStateWithLifecycle()
+    val trimStartMs by viewModel.trimStartMs.collectAsStateWithLifecycle()
+    val trimEndMs by viewModel.trimEndMs.collectAsStateWithLifecycle()
 
-    val currentTrack by viewModel.currentTrack.collectAsState()
-    val isPlaying by viewModel.isPlaying.collectAsState()
-    val currentPositionMs by viewModel.currentPositionMs.collectAsState()
-    val durationMs by viewModel.durationMs.collectAsState()
-    val playbackSpeed by viewModel.playbackSpeed.collectAsState()
-    val repeatMode by viewModel.repeatMode.collectAsState()
-    val isShuffle by viewModel.isShuffle.collectAsState()
-    val isFullPlayerOpen by viewModel.isFullPlayerOpen.collectAsState()
-
-    val trimTarget by viewModel.trimTarget.collectAsState()
-    val trimStartMs by viewModel.trimStartMs.collectAsState()
-    val trimEndMs by viewModel.trimEndMs.collectAsState()
-
-    val activeDownloadsCount = downloadTasks.count {
-        it.status != DownloadStatus.COMPLETED && it.status != DownloadStatus.FAILED
-    }
-
-    var isSavedContentOpen by remember { mutableStateOf(false) }
     var activeChannelTarget by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     Scaffold(
@@ -194,24 +171,13 @@ fun MainAppScreen(viewModel: MainViewModel) {
                     .fillMaxWidth()
                     .windowInsetsPadding(WindowInsets.navigationBars)
             ) {
-                // Docked MiniPlayer above bottom navigation
+                // Docked MiniPlayer: ONLY MiniPlayerHost recomposes on playback progress ticks
                 AnimatedVisibility(
-                    visible = currentTrack != null,
+                    visible = hasCurrentTrack,
                     enter = slideInVertically { it },
                     exit = slideOutVertically { it }
                 ) {
-                    currentTrack?.let { track ->
-                        MiniPlayer(
-                            track = track,
-                            isPlaying = isPlaying,
-                            currentPositionMs = currentPositionMs,
-                            durationMs = durationMs,
-                            onTogglePlayPause = { viewModel.togglePlayPause() },
-                            onNext = { viewModel.playNext() },
-                            onClose = { viewModel.stopPlayback() },
-                            onClick = { viewModel.setFullPlayerOpen(true) }
-                        )
-                    }
+                    MiniPlayerHost(viewModel = viewModel)
                 }
 
                 // Bottom Navigation Bar with 5 tabs and reselection reload
@@ -311,84 +277,18 @@ fun MainAppScreen(viewModel: MainViewModel) {
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
+            // Lazy tab loading: Each host ONLY collects its own state when active!
             when (currentTab) {
-                0 -> SearchScreen(
-                    searchQuery = searchQuery,
-                    onQueryChanged = { viewModel.onSearchQueryChanged(it) },
-                    onSearch = { viewModel.executeSearch(it) },
-                    onClear = { viewModel.clearSearch() },
-                    suggestions = searchSuggestions,
-                    history = searchHistory,
-                    onDeleteHistoryItem = { viewModel.deleteSearchHistoryItem(it) },
-                    onClearAllHistory = { viewModel.clearAllSearchHistory() },
-                    searchResults = searchResults,
-                    isSearching = isSearching,
-                    savedVideos = savedVideos,
-                    savedChannels = savedChannels,
-                    tracks = tracks,
-                    downloadTasks = downloadTasks,
-                    onToggleSaveVideo = { viewModel.toggleSaveVideo(it) },
-                    onToggleSaveChannel = { viewModel.toggleSaveChannel(it) },
-                    onDownload = { item, quality -> viewModel.startDownload(item, applyTrim = false, quality = quality) },
-                    onPlayTrack = { track -> viewModel.playTrack(track) },
-                    onTrim = { viewModel.openTrimmerDialog(it) },
-                    onDismissSuggestions = { viewModel.dismissSuggestions() },
-                    onLoadMore = { viewModel.loadMoreSearchResults() },
-                    onOpenSavedContent = { viewModel.selectTab(1) },
-                    onOpenChannel = { title, id -> activeChannelTarget = Pair(title, id) }
-                )
-                1 -> SavedContentScreen(
-                    savedChannels = savedChannels,
-                    savedVideos = savedVideos,
-                    onBack = { viewModel.selectTab(0) },
-                    onToggleChannelNotification = { title, enabled -> viewModel.toggleChannelNotification(title, enabled) },
-                    onDeleteChannel = { title -> viewModel.deleteSavedChannel(title) },
-                    onDeleteVideo = { id -> viewModel.deleteSavedVideo(id) },
-                    onLoadChannelVideos = { ch -> viewModel.fetchChannelVideos(ch) },
-                    onDownloadVideo = { item, q -> viewModel.startDownload(item, applyTrim = false, quality = q) },
-                    onPlayVideo = { item ->
-                        val existing = tracks.firstOrNull { it.id == item.id }
-                        if (existing != null) {
-                            viewModel.playTrack(existing)
-                        } else {
-                            viewModel.startDownload(item, applyTrim = false, quality = null)
-                        }
-                    },
-                    onOpenChannel = { title, id -> activeChannelTarget = Pair(title, id) }
-                )
-                2 -> DownloadsScreen(
-                    tasks = downloadTasks,
-                    onCancelTask = { viewModel.downloadManager.cancelDownload(it) },
-                    onStopLiveRecording = { viewModel.downloadManager.stopLiveRecording(it) },
-                    onDownloadUrl = { viewModel.startDirectUrlDownload(it) }
-                )
-                3 -> LibraryScreen(
-                    tracks = tracks,
-                    playlists = playlists,
-                    downloadTasks = downloadTasks,
-                    onPlayTrack = { list, idx -> viewModel.playTrackInList(list, idx) },
-                    onDeleteTrack = { viewModel.deleteTrack(it) },
-                    onCreatePlaylist = { viewModel.createPlaylist(it) },
-                    onAddTrackToPlaylist = { plId, trId -> viewModel.addTrackToPlaylist(plId, trId) },
-                    onOpenChannel = { title, id -> activeChannelTarget = Pair(title, id) }
-                )
-                4 -> SettingsScreen(
-                    settings = settings,
-                    onAllowCellularChanged = { viewModel.setAllowCellularDownloads(it) },
-                    onDarkModeChanged = { viewModel.setDarkMode(it) },
-                    onAmoledChanged = { viewModel.setAmoledTheme(it) },
-                    onQualityChanged = { viewModel.setAudioQuality(it) },
-                    onEmbedCoverArtChanged = { viewModel.setAutoEmbedCoverArt(it) },
-                    onFolderChanged = { viewModel.setDownloadFolder(it) },
-                    onFolderUriChanged = { viewModel.setFolderUri(it) },
-                    onReminderChanged = { en, h, m, d -> viewModel.setVideoReminder(en, h, m, d) },
-                    onAutoDownloadChanged = { en, kw -> viewModel.setAutoDownloadSettings(en, kw) }
-                )
+                0 -> SearchTabHost(viewModel = viewModel, onOpenChannel = { title, id -> activeChannelTarget = Pair(title, id) })
+                1 -> SavedContentTabHost(viewModel = viewModel, onOpenChannel = { title, id -> activeChannelTarget = Pair(title, id) })
+                2 -> DownloadsTabHost(viewModel = viewModel)
+                3 -> LibraryTabHost(viewModel = viewModel, onOpenChannel = { title, id -> activeChannelTarget = Pair(title, id) })
+                4 -> SettingsTabHost(viewModel = viewModel)
             }
         }
     }
 
-    // Audio Trimmer Dialog
+    // Audio Trimmer Dialog (only presented when requested)
     trimTarget?.let { item ->
         AudioTrimmerDialog(
             item = item,
@@ -405,66 +305,224 @@ fun MainAppScreen(viewModel: MainViewModel) {
         )
     }
 
-    // Full Player Modal Sheet
-    if (isFullPlayerOpen && currentTrack != null) {
-        FullPlayerSheet(
-            track = currentTrack!!,
-            isPlaying = isPlaying,
-            currentPositionMs = currentPositionMs,
-            durationMs = durationMs,
-            playbackSpeed = playbackSpeed,
-            repeatMode = repeatMode,
-            isShuffle = isShuffle,
-            onTogglePlayPause = { viewModel.togglePlayPause() },
-            onSeekTo = { viewModel.seekTo(it) },
-            onRewind10s = { viewModel.rewind10s() },
-            onForward10s = { viewModel.forward10s() },
-            onNext = { viewModel.playNext() },
-            onPrevious = { viewModel.playPrevious() },
-            onSetSpeed = { viewModel.setPlaybackSpeed(it) },
-            onToggleRepeat = { viewModel.toggleRepeat() },
-            onToggleShuffle = { viewModel.toggleShuffle() },
-            onClosePlayback = { viewModel.stopPlayback() },
-            onDismiss = { viewModel.setFullPlayerOpen(false) }
-        )
-    }
+    // Full Player Modal Sheet (isolated so ticks do not recompose root screen)
+    FullPlayerHost(viewModel = viewModel)
 
-    if (isSavedContentOpen) {
-        SavedContentScreen(
-            savedChannels = savedChannels,
-            savedVideos = savedVideos,
-            onBack = { isSavedContentOpen = false },
-            onToggleChannelNotification = { title, enabled -> viewModel.toggleChannelNotification(title, enabled) },
-            onDeleteChannel = { title -> viewModel.deleteSavedChannel(title) },
-            onDeleteVideo = { id -> viewModel.deleteSavedVideo(id) },
-            onLoadChannelVideos = { ch -> viewModel.fetchChannelVideos(ch) },
-            onDownloadVideo = { item, q -> viewModel.startDownload(item, applyTrim = false, quality = q) },
-            onPlayVideo = { item ->
-                val existing = tracks.firstOrNull { it.id == item.id }
-                if (existing != null) {
-                    viewModel.playTrack(existing)
-                } else {
-                    viewModel.startDownload(item, applyTrim = false, quality = null)
-                }
-            },
-            onOpenChannel = { title, id -> activeChannelTarget = Pair(title, id) }
-        )
-    }
-
-    // Dedicated Channel Screen (Requirement: עמוד ערוץ ייעודי מבוסס מידע של הערוץ מהחדש לישן)
+    // Dedicated Channel Screen
     activeChannelTarget?.let { (chTitle, chId) ->
-        ChannelScreen(
+        ChannelScreenHost(
             channelTitle = chTitle,
             channelId = chId,
-            savedChannels = savedChannels,
-            tracks = tracks,
-            downloadTasks = downloadTasks,
-            onBack = { activeChannelTarget = null },
-            onToggleSaveChannel = { viewModel.toggleSaveChannel(it) },
-            onToggleNotification = { title, enabled -> viewModel.toggleChannelNotification(title, enabled) },
-            onDownloadVideo = { item, quality -> viewModel.startDownload(item, applyTrim = false, quality = quality) },
-            onPlayTrack = { track -> viewModel.playTrack(track) },
-            onTrim = { viewModel.openTrimmerDialog(it) }
+            viewModel = viewModel,
+            onBack = { activeChannelTarget = null }
         )
     }
+}
+
+// ----------------- Isolated Tab & Player Hosts -----------------
+
+@Composable
+private fun MiniPlayerHost(viewModel: MainViewModel) {
+    val currentTrack by viewModel.currentTrack.collectAsStateWithLifecycle()
+    if (currentTrack == null) return
+
+    val isPlaying by viewModel.isPlaying.collectAsStateWithLifecycle()
+    val currentPositionMs by viewModel.currentPositionMs.collectAsStateWithLifecycle()
+    val durationMs by viewModel.durationMs.collectAsStateWithLifecycle()
+
+    MiniPlayer(
+        track = currentTrack!!,
+        isPlaying = isPlaying,
+        currentPositionMs = currentPositionMs,
+        durationMs = durationMs,
+        onTogglePlayPause = { viewModel.togglePlayPause() },
+        onNext = { viewModel.playNext() },
+        onClose = { viewModel.stopPlayback() },
+        onClick = { viewModel.setFullPlayerOpen(true) }
+    )
+}
+
+@Composable
+private fun FullPlayerHost(viewModel: MainViewModel) {
+    val isFullPlayerOpen by viewModel.isFullPlayerOpen.collectAsStateWithLifecycle()
+    if (!isFullPlayerOpen) return
+    val currentTrackNullable by viewModel.currentTrack.collectAsStateWithLifecycle()
+    val currentTrack = currentTrackNullable ?: return
+
+    val isPlaying by viewModel.isPlaying.collectAsStateWithLifecycle()
+    val currentPositionMs by viewModel.currentPositionMs.collectAsStateWithLifecycle()
+    val durationMs by viewModel.durationMs.collectAsStateWithLifecycle()
+    val playbackSpeed by viewModel.playbackSpeed.collectAsStateWithLifecycle()
+    val repeatMode by viewModel.repeatMode.collectAsStateWithLifecycle()
+    val isShuffle by viewModel.isShuffle.collectAsStateWithLifecycle()
+
+    FullPlayerSheet(
+        track = currentTrack,
+        isPlaying = isPlaying,
+        currentPositionMs = currentPositionMs,
+        durationMs = durationMs,
+        playbackSpeed = playbackSpeed,
+        repeatMode = repeatMode,
+        isShuffle = isShuffle,
+        onTogglePlayPause = { viewModel.togglePlayPause() },
+        onSeekTo = { viewModel.seekTo(it) },
+        onRewind10s = { viewModel.rewind10s() },
+        onForward10s = { viewModel.forward10s() },
+        onNext = { viewModel.playNext() },
+        onPrevious = { viewModel.playPrevious() },
+        onSetSpeed = { viewModel.setPlaybackSpeed(it) },
+        onToggleRepeat = { viewModel.toggleRepeat() },
+        onToggleShuffle = { viewModel.toggleShuffle() },
+        onClosePlayback = { viewModel.stopPlayback() },
+        onDismiss = { viewModel.setFullPlayerOpen(false) }
+    )
+}
+
+@Composable
+private fun SearchTabHost(
+    viewModel: MainViewModel,
+    onOpenChannel: (String, String) -> Unit
+) {
+    val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
+    val searchSuggestions by viewModel.searchSuggestions.collectAsStateWithLifecycle()
+    val searchResults by viewModel.searchResults.collectAsStateWithLifecycle()
+    val searchHistory by viewModel.searchHistory.collectAsStateWithLifecycle()
+    val savedVideos by viewModel.savedVideos.collectAsStateWithLifecycle()
+    val savedChannels by viewModel.savedChannels.collectAsStateWithLifecycle()
+    val isSearching by viewModel.isSearching.collectAsStateWithLifecycle()
+    val tracks by viewModel.tracks.collectAsStateWithLifecycle()
+    val downloadTasks by viewModel.downloadTasks.collectAsStateWithLifecycle()
+
+    SearchScreen(
+        searchQuery = searchQuery,
+        onQueryChanged = { viewModel.onSearchQueryChanged(it) },
+        onSearch = { viewModel.executeSearch(it) },
+        onClear = { viewModel.clearSearch() },
+        suggestions = searchSuggestions,
+        history = searchHistory,
+        onDeleteHistoryItem = { viewModel.deleteSearchHistoryItem(it) },
+        onClearAllHistory = { viewModel.clearAllSearchHistory() },
+        searchResults = searchResults,
+        isSearching = isSearching,
+        savedVideos = savedVideos,
+        savedChannels = savedChannels,
+        tracks = tracks,
+        downloadTasks = downloadTasks,
+        onToggleSaveVideo = { viewModel.toggleSaveVideo(it) },
+        onToggleSaveChannel = { viewModel.toggleSaveChannel(it) },
+        onDownload = { item, quality -> viewModel.startDownload(item, applyTrim = false, quality = quality) },
+        onPlayTrack = { track -> viewModel.playTrack(track) },
+        onTrim = { viewModel.openTrimmerDialog(it) },
+        onDismissSuggestions = { viewModel.dismissSuggestions() },
+        onLoadMore = { viewModel.loadMoreSearchResults() },
+        onOpenSavedContent = { viewModel.selectTab(1) },
+        onOpenChannel = onOpenChannel
+    )
+}
+
+@Composable
+private fun SavedContentTabHost(
+    viewModel: MainViewModel,
+    onOpenChannel: (String, String) -> Unit
+) {
+    val savedChannels by viewModel.savedChannels.collectAsStateWithLifecycle()
+    val savedVideos by viewModel.savedVideos.collectAsStateWithLifecycle()
+    val tracks by viewModel.tracks.collectAsStateWithLifecycle()
+
+    SavedContentScreen(
+        savedChannels = savedChannels,
+        savedVideos = savedVideos,
+        onBack = { viewModel.selectTab(0) },
+        onToggleChannelNotification = { title, enabled -> viewModel.toggleChannelNotification(title, enabled) },
+        onDeleteChannel = { title -> viewModel.deleteSavedChannel(title) },
+        onDeleteVideo = { id -> viewModel.deleteSavedVideo(id) },
+        onLoadChannelVideos = { ch -> viewModel.fetchChannelVideos(ch) },
+        onDownloadVideo = { item, q -> viewModel.startDownload(item, applyTrim = false, quality = q) },
+        onPlayVideo = { item ->
+            val existing = tracks.firstOrNull { it.id == item.id }
+            if (existing != null) {
+                viewModel.playTrack(existing)
+            } else {
+                viewModel.startDownload(item, applyTrim = false, quality = null)
+            }
+        },
+        onOpenChannel = onOpenChannel
+    )
+}
+
+@Composable
+private fun DownloadsTabHost(viewModel: MainViewModel) {
+    val downloadTasks by viewModel.downloadTasks.collectAsStateWithLifecycle()
+
+    DownloadsScreen(
+        tasks = downloadTasks,
+        onCancelTask = { viewModel.downloadManager.cancelDownload(it) },
+        onStopLiveRecording = { viewModel.downloadManager.stopLiveRecording(it) },
+        onDownloadUrl = { viewModel.startDirectUrlDownload(it) }
+    )
+}
+
+@Composable
+private fun LibraryTabHost(
+    viewModel: MainViewModel,
+    onOpenChannel: (String, String) -> Unit
+) {
+    val tracks by viewModel.tracks.collectAsStateWithLifecycle()
+    val playlists by viewModel.playlists.collectAsStateWithLifecycle()
+    val downloadTasks by viewModel.downloadTasks.collectAsStateWithLifecycle()
+
+    LibraryScreen(
+        tracks = tracks,
+        playlists = playlists,
+        downloadTasks = downloadTasks,
+        onPlayTrack = { list, idx -> viewModel.playTrackInList(list, idx) },
+        onDeleteTrack = { viewModel.deleteTrack(it) },
+        onCreatePlaylist = { viewModel.createPlaylist(it) },
+        onAddTrackToPlaylist = { plId, trId -> viewModel.addTrackToPlaylist(plId, trId) },
+        onOpenChannel = onOpenChannel
+    )
+}
+
+@Composable
+private fun SettingsTabHost(viewModel: MainViewModel) {
+    val settings by viewModel.settings.collectAsStateWithLifecycle()
+
+    SettingsScreen(
+        settings = settings,
+        onAllowCellularChanged = { viewModel.setAllowCellularDownloads(it) },
+        onDarkModeChanged = { viewModel.setDarkMode(it) },
+        onAmoledChanged = { viewModel.setAmoledTheme(it) },
+        onQualityChanged = { viewModel.setAudioQuality(it) },
+        onEmbedCoverArtChanged = { viewModel.setAutoEmbedCoverArt(it) },
+        onFolderChanged = { viewModel.setDownloadFolder(it) },
+        onFolderUriChanged = { viewModel.setFolderUri(it) },
+        onReminderChanged = { en, h, m, d -> viewModel.setVideoReminder(en, h, m, d) },
+        onAutoDownloadChanged = { en, kw -> viewModel.setAutoDownloadSettings(en, kw) }
+    )
+}
+
+@Composable
+private fun ChannelScreenHost(
+    channelTitle: String,
+    channelId: String,
+    viewModel: MainViewModel,
+    onBack: () -> Unit
+) {
+    val savedChannels by viewModel.savedChannels.collectAsStateWithLifecycle()
+    val tracks by viewModel.tracks.collectAsStateWithLifecycle()
+    val downloadTasks by viewModel.downloadTasks.collectAsStateWithLifecycle()
+
+    ChannelScreen(
+        channelTitle = channelTitle,
+        channelId = channelId,
+        savedChannels = savedChannels,
+        tracks = tracks,
+        downloadTasks = downloadTasks,
+        onBack = onBack,
+        onToggleSaveChannel = { viewModel.toggleSaveChannel(it) },
+        onToggleNotification = { title, enabled -> viewModel.toggleChannelNotification(title, enabled) },
+        onDownloadVideo = { item, quality -> viewModel.startDownload(item, applyTrim = false, quality = quality) },
+        onPlayTrack = { track -> viewModel.playTrack(track) },
+        onTrim = { viewModel.openTrimmerDialog(it) }
+    )
 }

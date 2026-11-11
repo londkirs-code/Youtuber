@@ -1,9 +1,11 @@
 package com.example.data.local
 
+import androidx.compose.runtime.Immutable
 import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
+@Immutable
 @Entity(tableName = "search_history")
 data class SearchHistoryEntity(
     @PrimaryKey
@@ -11,6 +13,7 @@ data class SearchHistoryEntity(
     val searchedAt: Long = System.currentTimeMillis()
 )
 
+@Immutable
 @Entity(tableName = "saved_videos")
 data class SavedVideoEntity(
     @PrimaryKey
@@ -25,6 +28,7 @@ data class SavedVideoEntity(
     val savedAt: Long = System.currentTimeMillis()
 )
 
+@Immutable
 @Entity(tableName = "saved_channels")
 data class SavedChannelEntity(
     @PrimaryKey

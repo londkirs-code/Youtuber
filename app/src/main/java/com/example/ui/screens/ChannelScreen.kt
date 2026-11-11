@@ -142,6 +142,24 @@ fun ChannelScreen(
         context.startActivity(Intent.createChooser(intent, "שתף סרטון"))
     }
 
+    // Precomputed O(1) in-memory lookup sets & maps to eliminate disk I/O and quadratic scans during list composition
+    val downloadedTracksMap = remember(tracks) {
+        val map = HashMap<String, TrackEntity>()
+        for (t in tracks) {
+            if (!t.isPartial) {
+                if (t.videoId.isNotBlank()) map[t.videoId] = t
+                map[t.id] = t
+            }
+        }
+        map
+    }
+    val partialTrackIds = remember(tracks) {
+        tracks.filter { it.isPartial }.map { it.videoId.ifEmpty { it.id } }.toHashSet()
+    }
+    val downloadTasksMap = remember(downloadTasks) {
+        downloadTasks.associateBy { it.videoId }
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -384,14 +402,11 @@ fun ChannelScreen(
                     items = videos,
                     key = { it.id }
                 ) { item ->
-                    val downloadedTrack = tracks.firstOrNull {
-                        (it.id == item.id || it.videoId == item.id || it.thumbnailUrl.contains(item.id)) &&
-                        !it.isPartial && File(it.filePath).exists() && File(it.filePath).length() > 0
-                    }
-                    val downloadTask = downloadTasks.firstOrNull { it.videoId == item.id }
+                    val downloadedTrack = downloadedTracksMap[item.id]
+                    val downloadTask = downloadTasksMap[item.id]
                     val isDownloaded = downloadedTrack != null || downloadTask?.status == DownloadStatus.COMPLETED
                     val isDownloading = downloadTask != null && (downloadTask.status == DownloadStatus.DOWNLOADING || downloadTask.status == DownloadStatus.CONNECTING || downloadTask.status == DownloadStatus.TRIMMING || downloadTask.status == DownloadStatus.QUEUED)
-                    val isPartial = !isDownloaded && !isDownloading && (tracks.any { (it.id == item.id || it.videoId == item.id || it.thumbnailUrl.contains(item.id)) && it.isPartial } || downloadTask?.status == DownloadStatus.FAILED)
+                    val isPartial = !isDownloaded && !isDownloading && (item.id in partialTrackIds || downloadTask?.status == DownloadStatus.FAILED)
                     val downloadProgress = downloadTask?.progressPercent ?: 0
 
                     VideoResultCard(
@@ -407,9 +422,8 @@ fun ChannelScreen(
                         onShareUrl = { shareUrl(item.id, item.title) },
                         onDownload = { onDownloadVideo(item, null) },
                         onPlay = {
-                            if (downloadedTrack != null) {
-                                onPlayTrack(downloadedTrack)
-                            }
+                            val trackToPlay = downloadedTrack ?: downloadedTracksMap[item.id]
+                            if (trackToPlay != null) onPlayTrack(trackToPlay)
                         },
                         onTrim = { onTrim(item) },
                         onToggleSaveVideo = {},
