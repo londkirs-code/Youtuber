@@ -706,6 +706,12 @@ class DownloadManager(private val context: Context) {
         val liveCallback = object : YtDlpBridgeCallback {
             override fun onLog(level: String, message: String) {
                 rawLog("[$level] $message")
+                if (message.startsWith("[live-hls] STREAM_URL=")) {
+                    val streamUrl = message.removePrefix("[live-hls] STREAM_URL=").trim()
+                    _tasks.update { list ->
+                        list.map { if (it.id == taskId) it.copy(liveStreamUrl = streamUrl) else it }
+                    }
+                }
                 if (message.startsWith("[live-hls]")) {
                     log(message)
                 }

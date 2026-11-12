@@ -46,7 +46,8 @@ data class DownloadTask(
     val filePath: String? = null,
     val errorMessage: String? = null,
     val trimRange: TrimRange? = null,
-    val recordedDurationSeconds: Long = 0L
+    val recordedDurationSeconds: Long = 0L,
+    val liveStreamUrl: String? = null
 )
 
 @Immutable

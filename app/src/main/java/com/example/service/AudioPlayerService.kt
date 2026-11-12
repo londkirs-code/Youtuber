@@ -17,8 +17,10 @@ import android.os.Binder
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import com.example.App
 import com.example.MainActivity
 import com.example.data.local.TrackEntity
+import com.example.data.model.DownloadStatus
 import com.example.data.model.RepeatMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -140,6 +142,13 @@ class AudioPlayerService : Service() {
             mediaPlayer?.release()
             mediaPlayer = null
 
+            val app = applicationContext as? App
+            val liveTask = app?.downloadManager?.tasks?.value?.find {
+                it.id == track.id || it.videoId == track.videoId
+            }
+            val isLiveRecording = (track.isLiveCapture || liveTask?.isLiveStream == true) &&
+                liveTask?.status == DownloadStatus.RECORDING_LIVE
+
             var playableFile: File? = File(track.filePath)
             if (playableFile?.exists() != true) {
                 val partFile = File(track.filePath + ".part")
@@ -154,24 +163,57 @@ class AudioPlayerService : Service() {
                 }
             }
 
-            if (playableFile == null || !playableFile.exists() || playableFile.length() == 0L) {
-                Log.e(TAG, "File does not exist or is empty: ${track.filePath}")
+            val hasFile = playableFile != null && playableFile.exists() && playableFile.length() > 0L
+            val streamUrl = liveTask?.liveStreamUrl
+
+            if (!hasFile && streamUrl.isNullOrBlank()) {
+                Log.e(TAG, "File does not exist or is empty and no live stream URL: ${track.filePath}")
                 return
             }
 
             mediaPlayer = MediaPlayer().apply {
-                setDataSource(playableFile.absolutePath)
+                if (hasFile) {
+                    setDataSource(playableFile!!.absolutePath)
+                } else {
+                    setDataSource(applicationContext, android.net.Uri.parse(streamUrl!!))
+                }
+
                 setOnPreparedListener { mp ->
                     mp.start()
                     applyPlaybackSpeed(_playbackSpeed.value)
                     _isPlaying.value = true
-                    _durationMs.value = mp.duration.toLong()
-                    startPositionTracker()
+
+                    val rawDuration = mp.duration.toLong()
+                    val liveSec = liveTask?.recordedDurationSeconds ?: 0L
+                    _durationMs.value = if (isLiveRecording) {
+                        if (rawDuration in 1..86400000 && rawDuration > 5000L) {
+                            maxOf(rawDuration, liveSec * 1000L)
+                        } else {
+                            (liveSec * 1000L).coerceAtLeast(1000L)
+                        }
+                    } else if (rawDuration > 0L) {
+                        rawDuration
+                    } else {
+                        track.durationMs
+                    }
+
+                    startPositionTracker(isLiveRecording, liveTask?.id)
                     updateMediaMetadata(track, _durationMs.value, currentCoverBitmap)
                     updateMediaSessionState(PlaybackState.STATE_PLAYING)
                     loadArtworkAndShowNotification(track)
                 }
                 setOnCompletionListener {
+                    if (isLiveRecording) {
+                        serviceScope.launch {
+                            delay(1500)
+                            if (_isPlaying.value) {
+                                try {
+                                    playTrack(track)
+                                } catch (_: Exception) {}
+                            }
+                        }
+                        return@setOnCompletionListener
+                    }
                     handleTrackCompletion()
                 }
                 setOnErrorListener { _, what, extra ->
@@ -309,13 +351,24 @@ class AudioPlayerService : Service() {
         }
     }
 
-    private fun startPositionTracker() {
+    private fun startPositionTracker(isLiveRecording: Boolean = false, liveTaskId: String? = null) {
         positionTrackerJob?.cancel()
         positionTrackerJob = serviceScope.launch {
             while (isActive) {
                 mediaPlayer?.let { player ->
                     if (player.isPlaying) {
                         _currentPositionMs.value = player.currentPosition.toLong()
+                        if (isLiveRecording && liveTaskId != null) {
+                            val app = applicationContext as? App
+                            val task = app?.downloadManager?.tasks?.value?.find { it.id == liveTaskId }
+                            val liveSec = task?.recordedDurationSeconds ?: 0L
+                            if (liveSec > 0L) {
+                                val liveMs = liveSec * 1000L
+                                if (liveMs > _durationMs.value) {
+                                    _durationMs.value = liveMs
+                                }
+                            }
+                        }
                     }
                 }
                 delay(500)

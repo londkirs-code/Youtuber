@@ -299,6 +299,42 @@ def clear_cache():
     return True
 
 
+def _patch_init_segment_duration(data):
+    """Patch mvhd, tkhd, and mehd in fMP4 init segment so local media players do not cap playback at 5 seconds."""
+    try:
+        ba = bytearray(data)
+        # Search for 'mvhd' (movie header)
+        idx = ba.find(b"mvhd")
+        if idx != -1 and idx + 28 <= len(ba):
+            version = ba[idx + 8]
+            if version == 0 and idx + 28 <= len(ba):
+                ba[idx + 24 : idx + 28] = b"\x7f\xff\xff\xff"
+            elif version == 1 and idx + 40 <= len(ba):
+                ba[idx + 32 : idx + 40] = b"\x00\x00\x00\x00\x7f\xff\xff\xff"
+
+        # Search for 'tkhd' (track header)
+        idx_t = ba.find(b"tkhd")
+        if idx_t != -1 and idx_t + 32 <= len(ba):
+            version_t = ba[idx_t + 8]
+            if version_t == 0 and idx_t + 32 <= len(ba):
+                ba[idx_t + 28 : idx_t + 32] = b"\x7f\xff\xff\xff"
+            elif version_t == 1 and idx_t + 44 <= len(ba):
+                ba[idx_t + 36 : idx_t + 44] = b"\x00\x00\x00\x00\x7f\xff\xff\xff"
+
+        # Search for 'mehd' (movie extends header box)
+        idx_m = ba.find(b"mehd")
+        if idx_m != -1 and idx_m + 16 <= len(ba):
+            version_m = ba[idx_m + 8]
+            if version_m == 0 and idx_m + 16 <= len(ba):
+                ba[idx_m + 12 : idx_m + 16] = b"\x7f\xff\xff\xff"
+            elif version_m == 1 and idx_m + 24 <= len(ba):
+                ba[idx_m + 12 : idx_m + 20] = b"\x00\x00\x00\x00\x7f\xff\xff\xff"
+
+        return bytes(ba)
+    except Exception:
+        return data
+
+
 def download_live_hls(url, player_client="default", out_base="", callback=None):
     """Download HLS live stream segments directly in Python without FFmpeg network dependency."""
     import time
@@ -420,6 +456,8 @@ def download_live_hls(url, player_client="default", out_base="", callback=None):
                 m3u8_url = variant_url
                 _emit(callback, "INFO", f"[live-hls] Selected master variant: {m3u8_url.split('?')[0]}")
 
+        _emit(callback, "INFO", f"[live-hls] STREAM_URL={m3u8_url}")
+
         out_path = f"{out_base}.{out_ext}"
         if os.path.exists(out_path):
             try:
@@ -486,6 +524,7 @@ def download_live_hls(url, player_client="default", out_base="", callback=None):
                     try:
                         init_bytes = _fetch(full_init_url)
                         if init_bytes:
+                            init_bytes = _patch_init_segment_duration(init_bytes)
                             out_file.write(init_bytes)
                             out_file.flush()
                             total_bytes_written += len(init_bytes)
@@ -511,8 +550,14 @@ def download_live_hls(url, player_client="default", out_base="", callback=None):
                                 curr_seq += 1
                                 break
 
-                # On first cycle: start from the first segment currently in playlist
-                new_segments = [s for s in segments if s[0] > last_written_seq]
+                # On first cycle: start from the live edge (now), not from the beginning of DVR broadcast
+                if last_written_seq == -1:
+                    live_start_index = max(0, len(segments) - 2)
+                    new_segments = segments[live_start_index:]
+                    if live_start_index > 0:
+                        _emit(callback, "INFO", f"[live-hls] Starting at live edge (skipped {live_start_index} earlier DVR segments).")
+                else:
+                    new_segments = [s for s in segments if s[0] > last_written_seq]
 
                 for seg_seq, seg_rel_url, seg_dur in new_segments:
                     _check_cancel(callback)
