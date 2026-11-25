@@ -13,7 +13,9 @@ import com.example.engine.EngineRuntime
 import com.example.engine.YtDlpBridgeCallback
 import com.example.notify.Notifier
 import com.example.work.ChannelCheckWorker
-import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -21,7 +23,22 @@ import kotlinx.coroutines.launch
 
 class App : Application(), ImageLoaderFactory {
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val ytdlpReady = CompletableDeferred<Boolean>()
+
+    // Starting CPython + yt-dlp is CPU-heavy. Doing it the instant the app opened competed with
+    // the first frames / first tab switches. It now starts on first use (a download or the engine
+    // screen) or a few seconds after launch, whichever comes first.
+    private val ytdlpReady = appScope.async(start = CoroutineStart.LAZY) {
+        try {
+            EngineRuntime.initialize(this@App)
+            Log.i(TAG, "Embedded Python/yt-dlp/FFmpeg engine initialized.")
+            true
+        } catch (error: Exception) {
+            getSharedPreferences("yt-dlp-engine", MODE_PRIVATE).edit()
+                .putString("engine_error", error.stackTraceToString()).apply()
+            Log.e(TAG, "Embedded yt-dlp engine initialization failed", error)
+            false
+        }
+    }
 
     // One shared DownloadManager for the whole process (UI, notifications, receivers).
     val downloadManager: DownloadManager by lazy { DownloadManager(this) }
@@ -71,16 +88,8 @@ class App : Application(), ImageLoaderFactory {
         ChannelCheckWorker.schedule(this)
 
         appScope.launch {
-            try {
-                EngineRuntime.initialize(this@App)
-                Log.i(TAG, "Embedded Python/yt-dlp/FFmpeg engine initialized.")
-                ytdlpReady.complete(true)
-            } catch (error: Exception) {
-                getSharedPreferences("yt-dlp-engine", MODE_PRIVATE).edit()
-                    .putString("engine_error", error.stackTraceToString()).apply()
-                Log.e(TAG, "Embedded yt-dlp engine initialization failed", error)
-                ytdlpReady.complete(false)
-            }
+            delay(ENGINE_WARMUP_DELAY_MS)
+            ytdlpReady.start()
         }
     }
 
@@ -119,5 +128,6 @@ class App : Application(), ImageLoaderFactory {
 
     companion object {
         private const val TAG = "App"
+        private const val ENGINE_WARMUP_DELAY_MS = 4_000L
     }
 }

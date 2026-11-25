@@ -61,6 +61,11 @@ android {
     }
     debug {
       signingConfig = signingConfigs.getByName("debugConfig")
+      // The published APK is built from this build type. A debuggable app runs Compose
+      // without ART optimisations (and ignores baseline profiles), which made every screen
+      // and tab switch feel stuck. Same key + applicationId, so updates install as before.
+      isDebuggable = false
+      isJniDebuggable = false
     }
   }
 
@@ -120,7 +125,9 @@ dependencies {
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
   implementation(libs.okhttp)
+  // Provides libqjs.so (QuickJS) used by the embedded yt-dlp for YouTube JS challenges.
   implementation(libs.youtubedl.library)
+  implementation(libs.androidx.profileinstaller)
   implementation(libs.androidx.work.runtime.ktx)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)

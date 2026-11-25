@@ -69,7 +69,7 @@ class ChannelCheckWorker(ctx: Context, params: WorkerParameters) : CoroutineWork
                             thumbnailUrl = "https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg",
                             isLive = false,
                             trimRange = null,
-                            settings = com.example.data.model.UserSettings()
+                            settings = com.example.data.prefs.SettingsStore.load(applicationContext)
                         )
                     } else {
                         Notifier.newVideo(

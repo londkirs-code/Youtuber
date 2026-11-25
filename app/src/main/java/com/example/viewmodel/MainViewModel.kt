@@ -22,6 +22,7 @@ import com.example.data.model.RepeatMode
 import com.example.data.model.SearchResultItem
 import com.example.data.model.TrimRange
 import com.example.data.model.UserSettings
+import com.example.data.prefs.SettingsStore
 import com.example.download.DownloadManager
 import com.example.network.YouTubeEngine
 import com.example.service.AudioPlayerService
@@ -88,20 +89,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _searchResults = MutableStateFlow<List<SearchResultItem>>(emptyList())
     val searchResults: StateFlow<List<SearchResultItem>> = _searchResults.asStateFlow()
 
+    // Room-backed lists stay loaded for the ViewModel's lifetime (cheap): with WhileSubscribed
+    // they were dropped 5 s after leaving a tab and every return showed an empty list first.
     val searchHistory: StateFlow<List<SearchHistoryEntity>> = database.searchHistoryDao().getAllHistory()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val savedVideos: StateFlow<List<SavedVideoEntity>> = database.savedMediaDao().getAllSavedVideos()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val savedChannels: StateFlow<List<SavedChannelEntity>> = database.savedMediaDao().getAllSavedChannels()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private val _isSearching = MutableStateFlow(false)
     val isSearching: StateFlow<Boolean> = _isSearching.asStateFlow()
 
     private var suggestionDebounceJob: Job? = null
     private var searchJob: Job? = null
+    private var loadMoreJob: Job? = null
 
     // Trimmer Dialog state
     private val _trimTarget = MutableStateFlow<SearchResultItem?>(null)
@@ -114,56 +118,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val trimEndMs: StateFlow<Long> = _trimEndMs.asStateFlow()
 
     // User Settings persistence
-    private val prefs = application.getSharedPreferences("youtuber_user_settings", Context.MODE_PRIVATE)
 
-    private fun loadSettings(): UserSettings {
-        val dark = prefs.getBoolean("is_dark", true)
-        val amoled = prefs.getBoolean("is_amoled", false)
-        val cellular = prefs.getBoolean("allow_cellular", true)
-        val coverArt = prefs.getBoolean("auto_embed_cover", true)
-        val folder = prefs.getString("download_folder", "תיקיית המוזיקה (Music/TuneVault)") ?: "תיקיית המוזיקה (Music/TuneVault)"
-        val folderUri = prefs.getString("download_folder_uri", "") ?: ""
-        val reminder = prefs.getBoolean("reminder_enabled", false)
-        val reminderH = prefs.getInt("reminder_hour", 20)
-        val reminderM = prefs.getInt("reminder_min", 0)
-        val autoDl = prefs.getBoolean("auto_dl_enabled", false)
-        val autoKw = prefs.getString("auto_dl_keyword", "") ?: ""
-        val quality = prefs.getString("audio_quality", null)
-            ?.let { name -> AudioQuality.entries.firstOrNull { it.name == name } }
-            ?: AudioQuality.BEST
-        return UserSettings(
-            allowCellularDownloads = cellular,
-            isDarkMode = dark,
-            isAmoledTheme = amoled,
-            autoEmbedCoverArt = coverArt,
-            downloadFolderPath = folder,
-            downloadFolderUri = folderUri,
-            videoReminderEnabled = reminder,
-            reminderHour = reminderH,
-            reminderMinute = reminderM,
-            autoDownloadEnabled = autoDl,
-            autoDownloadKeyword = autoKw,
-            audioQuality = quality
-        )
-    }
+    private fun loadSettings(): UserSettings = SettingsStore.load(getApplication<Application>())
 
     private fun updateAndPersistSettings(transform: (UserSettings) -> UserSettings) {
         val updated = transform(_settings.value)
         _settings.value = updated
-        prefs.edit()
-            .putBoolean("is_dark", updated.isDarkMode)
-            .putBoolean("is_amoled", updated.isAmoledTheme)
-            .putBoolean("allow_cellular", updated.allowCellularDownloads)
-            .putBoolean("auto_embed_cover", updated.autoEmbedCoverArt)
-            .putString("download_folder", updated.downloadFolderPath)
-            .putString("download_folder_uri", updated.downloadFolderUri)
-            .putBoolean("reminder_enabled", updated.videoReminderEnabled)
-            .putInt("reminder_hour", updated.reminderHour)
-            .putInt("reminder_min", updated.reminderMinute)
-            .putBoolean("auto_dl_enabled", updated.autoDownloadEnabled)
-            .putString("auto_dl_keyword", updated.autoDownloadKeyword)
-            .putString("audio_quality", updated.audioQuality.name)
-            .apply()
+        SettingsStore.save(getApplication<Application>(), updated)
     }
 
     private val _settings = MutableStateFlow(loadSettings())
@@ -171,10 +132,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // Room Database Flows
     val tracks: StateFlow<List<TrackEntity>> = database.trackDao().getAllTracks()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val playlists: StateFlow<List<PlaylistEntity>> = database.playlistDao().getAllPlaylists()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     // Downloads from DownloadManager (full detail incl. logs) — only for the Downloads tab.
     val downloadTasks: StateFlow<List<DownloadTask>> = downloadManager.tasks
@@ -328,6 +289,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         // A newer search/paste cancels the older one so stale results never overwrite fresh ones
         searchJob?.cancel()
+        loadMoreJob?.cancel()
         searchJob = viewModelScope.launch {
             val results = YouTubeEngine.searchVideos(q)
             _searchResults.value = results
@@ -338,9 +300,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun loadMoreSearchResults() {
         val q = _searchQuery.value.trim()
         if (q.isBlank() || _isSearching.value || isYoutubeLink(q)) return
-        viewModelScope.launch {
+        // One page at a time: scrolling near the end used to fire several parallel requests.
+        if (loadMoreJob?.isActive == true) return
+        loadMoreJob = viewModelScope.launch {
             val currentSize = _searchResults.value.size
             val more = YouTubeEngine.searchMoreVideos(q, currentSize)
+            // Results from an older query must not be appended to a newer search.
+            if (q != _searchQuery.value.trim()) return@launch
             if (more.isNotEmpty()) {
                 val existingIds = _searchResults.value.map { it.id }.toSet()
                 val filtered = more.filter { it.id !in existingIds }

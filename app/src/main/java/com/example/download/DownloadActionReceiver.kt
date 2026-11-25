@@ -4,7 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.example.App
-import com.example.data.model.UserSettings
+import com.example.data.prefs.SettingsStore
 import com.example.notify.Notifier
 
 /** Handles the buttons inside notifications ("ביטול" and "הורד שמע"). */
@@ -27,7 +27,7 @@ class DownloadActionReceiver : BroadcastReceiver() {
                         ?: "https://i.ytimg.com/vi/$videoId/hqdefault.jpg",
                     isLive = false,
                     trimRange = null,
-                    settings = UserSettings()
+                    settings = SettingsStore.load(context)
                 )
                 Notifier.cancelNewVideo(context, videoId)
             }

@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -42,6 +43,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
@@ -160,6 +162,12 @@ fun MainAppScreen(viewModel: MainViewModel) {
     val trimEndMs by viewModel.trimEndMs.collectAsStateWithLifecycle()
 
     var activeChannelTarget by remember { mutableStateOf<Pair<String, String>?>(null) }
+    val tabStateHolder = rememberSaveableStateHolder()
+
+    // System back on any tab other than Search goes to Search instead of closing the app.
+    BackHandler(enabled = currentTab != 0 && activeChannelTarget == null) {
+        viewModel.selectTab(0)
+    }
 
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
@@ -276,12 +284,17 @@ fun MainAppScreen(viewModel: MainViewModel) {
                 .padding(innerPadding)
         ) {
             // Lazy tab loading: Each host ONLY collects its own state when active!
-            when (currentTab) {
-                0 -> SearchTabHost(viewModel = viewModel, onOpenChannel = { title, id -> activeChannelTarget = Pair(title, id) })
-                1 -> SavedContentTabHost(viewModel = viewModel, onOpenChannel = { title, id -> activeChannelTarget = Pair(title, id) })
-                2 -> DownloadsTabHost(viewModel = viewModel)
-                3 -> LibraryTabHost(viewModel = viewModel, onOpenChannel = { title, id -> activeChannelTarget = Pair(title, id) })
-                4 -> SettingsTabHost(viewModel = viewModel)
+            // The saveable state holder keeps each tab's scroll position / inputs, so coming
+            // back to a tab returns to where you were instead of rebuilding it from the top.
+            val openChannel: (String, String) -> Unit = remember { { title, id -> activeChannelTarget = Pair(title, id) } }
+            tabStateHolder.SaveableStateProvider(key = currentTab) {
+                when (currentTab) {
+                    0 -> SearchTabHost(viewModel = viewModel, onOpenChannel = openChannel)
+                    1 -> SavedContentTabHost(viewModel = viewModel, onOpenChannel = openChannel)
+                    2 -> DownloadsTabHost(viewModel = viewModel)
+                    3 -> LibraryTabHost(viewModel = viewModel, onOpenChannel = openChannel)
+                    4 -> SettingsTabHost(viewModel = viewModel)
+                }
             }
         }
     }
