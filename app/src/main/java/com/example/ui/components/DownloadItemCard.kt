@@ -430,15 +430,17 @@ fun DownloadItemCard(
                                 } else {
                                     // One pre-built text block instead of one Text per line:
                                     // rebuilt only when the log list itself changes.
-                                    val hebrewLogText = remember(task.logs) {
+                                    val cutColor = NeonCyan
+                                    val normalColor = TextSecondary
+                                    val hebrewLogText = remember(task.logs, cutColor, normalColor) {
                                         buildAnnotatedString {
                                             task.logs.forEachIndexed { index, logLine ->
                                                 if (index > 0) append("\n")
                                                 val color = when {
                                                     logLine.contains("שגיאה") -> LiveBadgeColor
                                                     logLine.contains("הצלחה") -> SuccessGreen
-                                                    logLine.contains("חיתוך") -> NeonCyan
-                                                    else -> TextSecondary
+                                                    logLine.contains("חיתוך") -> cutColor
+                                                    else -> normalColor
                                                 }
                                                 withStyle(SpanStyle(color = color)) { append(logLine) }
                                             }
