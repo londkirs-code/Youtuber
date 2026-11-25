@@ -219,7 +219,12 @@ class AudioPlayerService : Service() {
                 setOnErrorListener { _, what, extra ->
                     Log.e(TAG, "MediaPlayer error: $what, $extra")
                     _isPlaying.value = false
-                    false
+                    positionTrackerJob?.cancel()
+                    updateMediaSessionState(PlaybackState.STATE_ERROR)
+                    // true = handled. Returning false made MediaPlayer fire onCompletion, which
+                    // jumped to the next track; with repeat-all and a missing file this looped
+                    // forever and pinned the CPU.
+                    true
                 }
                 prepareAsync()
             }
@@ -346,6 +351,7 @@ class AudioPlayerService : Service() {
                 } else {
                     _isPlaying.value = false
                     updateMediaSessionState(PlaybackState.STATE_STOPPED)
+                    _currentTrack.value?.let { updateNotification(it) }
                 }
             }
         }

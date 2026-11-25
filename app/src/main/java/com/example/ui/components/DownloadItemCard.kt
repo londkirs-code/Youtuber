@@ -56,6 +56,9 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -425,19 +428,27 @@ fun DownloadItemCard(
                                         modifier = Modifier.padding(top = 4.dp)
                                     )
                                 } else {
-                                    task.logs.forEach { logLine ->
-                                        Text(
-                                            text = logLine,
-                                            color = when {
-                                                logLine.contains("שגיאה") -> LiveBadgeColor
-                                                logLine.contains("הצלחה") -> SuccessGreen
-                                                logLine.contains("חיתוך") -> NeonCyan
-                                                else -> TextSecondary
-                                            },
-                                            fontSize = 11.sp,
-                                            lineHeight = 16.sp
-                                        )
+                                    // One pre-built text block instead of one Text per line:
+                                    // rebuilt only when the log list itself changes.
+                                    val hebrewLogText = remember(task.logs) {
+                                        buildAnnotatedString {
+                                            task.logs.forEachIndexed { index, logLine ->
+                                                if (index > 0) append("\n")
+                                                val color = when {
+                                                    logLine.contains("שגיאה") -> LiveBadgeColor
+                                                    logLine.contains("הצלחה") -> SuccessGreen
+                                                    logLine.contains("חיתוך") -> NeonCyan
+                                                    else -> TextSecondary
+                                                }
+                                                withStyle(SpanStyle(color = color)) { append(logLine) }
+                                            }
+                                        }
                                     }
+                                    Text(
+                                        text = hebrewLogText,
+                                        fontSize = 11.sp,
+                                        lineHeight = 16.sp
+                                    )
                                 }
                             }
                         } else {
@@ -450,8 +461,10 @@ fun DownloadItemCard(
                                     fontFamily = FontFamily.Monospace
                                 )
                             } else {
-                                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                    task.rawLogs.forEach { rawLine ->
+                                val rawLogText = remember(task.rawLogs) {
+                                    buildAnnotatedString {
+                                    task.rawLogs.forEachIndexed { index, rawLine ->
+                                        if (index > 0) append("\n")
                                         val lineColor = when {
                                             rawLine.startsWith("[cmd]") -> Color(0xFFFFD54F)
                                             rawLine.startsWith("[youtube]") || rawLine.startsWith("[info]") -> Color(0xFF00E5FF)
@@ -465,15 +478,16 @@ fun DownloadItemCard(
                                             rawLine.startsWith("[process]") || rawLine.startsWith("[success]") -> Color(0xFF1DE9B6)
                                             else -> Color(0xFFCFD8DC)
                                         }
-                                        Text(
-                                            text = rawLine,
-                                            color = lineColor,
-                                            fontSize = 10.sp,
-                                            fontFamily = FontFamily.Monospace,
-                                            lineHeight = 14.sp
-                                        )
+                                        withStyle(SpanStyle(color = lineColor)) { append(rawLine) }
+                                    }
                                     }
                                 }
+                                Text(
+                                    text = rawLogText,
+                                    fontSize = 10.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    lineHeight = 14.sp
+                                )
                             }
                         }
                     }

@@ -405,7 +405,7 @@ fun ChannelScreen(
                     val downloadedTrack = downloadedTracksMap[item.id]
                     val downloadTask = downloadTasksMap[item.id]
                     val isDownloaded = downloadedTrack != null || downloadTask?.status == DownloadStatus.COMPLETED
-                    val isDownloading = downloadTask != null && (downloadTask.status == DownloadStatus.DOWNLOADING || downloadTask.status == DownloadStatus.CONNECTING || downloadTask.status == DownloadStatus.TRIMMING || downloadTask.status == DownloadStatus.QUEUED)
+                    val isDownloading = downloadTask != null && (downloadTask.status == DownloadStatus.DOWNLOADING || downloadTask.status == DownloadStatus.CONNECTING || downloadTask.status == DownloadStatus.TRIMMING || downloadTask.status == DownloadStatus.QUEUED || downloadTask.status == DownloadStatus.FINISHING || downloadTask.status == DownloadStatus.RECORDING_LIVE)
                     val isPartial = !isDownloaded && !isDownloading && (item.id in partialTrackIds || downloadTask?.status == DownloadStatus.FAILED)
                     val downloadProgress = downloadTask?.progressPercent ?: 0
 

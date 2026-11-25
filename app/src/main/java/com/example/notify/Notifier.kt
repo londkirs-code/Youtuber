@@ -35,7 +35,8 @@ object Notifier {
 
     private val lastProgressAt = HashMap<String, Long>()
     private val thumbCache = LruCache<String, Bitmap>(30)
-    private val thumbUrls = HashMap<String, String>()
+    // Touched from the download (Python) thread and the main thread at the same time.
+    private val thumbUrls = java.util.concurrent.ConcurrentHashMap<String, String>()
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     fun createChannels(ctx: Context) {
@@ -90,8 +91,11 @@ object Notifier {
         if (thumbCache.get(url) != null) return
         scope.launch {
             try {
-                val stream = URL(url).openStream()
-                val bmp = BitmapFactory.decodeStream(stream)
+                val connection = URL(url).openConnection().apply {
+                    connectTimeout = 10_000
+                    readTimeout = 10_000
+                }
+                val bmp = connection.getInputStream().use { BitmapFactory.decodeStream(it) }
                 if (bmp != null) {
                     thumbCache.put(url, bmp)
                 }

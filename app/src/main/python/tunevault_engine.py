@@ -15,6 +15,7 @@ import re
 import shlex
 import shutil
 import sys
+import time
 import traceback
 
 _FFMPEG_DIR = None
@@ -58,12 +59,31 @@ def _emit(callback, level, message):
         pass
 
 
+_PROGRESS_LINE = re.compile(r"^\[download\]\s+[\d.]+%")
+
+
 class _Logger:
+    """Forwards yt-dlp log lines to Kotlin.
+
+    yt-dlp prints a "[download] 42.1% of ..." line for every network block it
+    reads (hundreds per second on a fast connection). Each one crossed the
+    Python->Kotlin bridge and rebuilt the download list in the UI, which froze
+    the app. Progress is already reported through the progress hook, so those
+    lines are throttled here to at most one every couple of seconds.
+    """
+
     def __init__(self, callback):
         self.callback = callback
+        self._last_progress_line = 0.0
 
     def debug(self, message):
-        _emit(self.callback, "DEBUG", message)
+        text = str(message)
+        if _PROGRESS_LINE.match(text):
+            now = time.monotonic()
+            if now - self._last_progress_line < 2.0 and "100%" not in text:
+                return
+            self._last_progress_line = now
+        _emit(self.callback, "DEBUG", text)
 
     def info(self, message):
         _emit(self.callback, "INFO", message)
@@ -76,13 +96,23 @@ class _Logger:
 
 
 def _progress_hook(callback):
+    # yt-dlp calls the hook for every block it reads. Calling into Kotlin that
+    # often (twice per block: isCancelled + onProgress) starves the UI thread,
+    # so both calls are limited to ~4 per second. Cancellation stays responsive.
+    state = {"last": 0.0}
+
     def hook(data):
         if callback is None:
             return
         try:
+            status = data.get("status")
+            now = time.monotonic()
+            if status == "downloading" and now - state["last"] < 0.25:
+                return
+            state["last"] = now
             if callback.isCancelled():
                 raise RuntimeError("TUNEVault_CANCELLED")
-            if data.get("status") != "downloading":
+            if status != "downloading":
                 return
             raw_percent = str(data.get("_percent_str") or "0").replace("%", "")
             raw_percent = re.sub(r"\x1b\[[0-9;]*m", "", raw_percent).strip()
@@ -127,6 +157,16 @@ def versions():
         "extractors": len(ytdlp.list_extractors()),
         "architecture": platform.machine(),
     })
+
+
+def quick_version():
+    """Cheap readiness check used at app start: imports yt-dlp only.
+
+    versions() also builds the full extractor list (~1800 classes), which takes
+    several seconds on a phone and held up the first download after launch.
+    """
+    ytdlp = _yt_dlp()
+    return str(getattr(ytdlp, "__version__", "unknown"))
 
 
 def _prepare_args(argv):

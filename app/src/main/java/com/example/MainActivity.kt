@@ -130,8 +130,7 @@ class MainActivity : ComponentActivity() {
         if (intent?.action == Intent.ACTION_VIEW) {
             val viewUrl = intent.dataString
             if (!viewUrl.isNullOrBlank()) {
-                viewModel.onSearchQueryChanged(viewUrl)
-                viewModel.executeSearch(viewUrl)
+                viewModel.openSharedText(viewUrl)
                 viewModel.selectTab(0)
                 return
             }
@@ -141,8 +140,7 @@ class MainActivity : ComponentActivity() {
         if (intent?.action == Intent.ACTION_SEND && intent.type == "text/plain") {
             val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT) ?: ""
             if (sharedText.isNotBlank()) {
-                viewModel.onSearchQueryChanged(sharedText)
-                viewModel.executeSearch(sharedText)
+                viewModel.openSharedText(sharedText)
                 viewModel.selectTab(0)
             }
         }
@@ -391,7 +389,7 @@ private fun SearchTabHost(
     val savedChannels by viewModel.savedChannels.collectAsStateWithLifecycle()
     val isSearching by viewModel.isSearching.collectAsStateWithLifecycle()
     val tracks by viewModel.tracks.collectAsStateWithLifecycle()
-    val downloadTasks by viewModel.downloadTasks.collectAsStateWithLifecycle()
+    val downloadTasks by viewModel.downloadBadges.collectAsStateWithLifecycle()
 
     SearchScreen(
         searchQuery = searchQuery,
@@ -469,12 +467,10 @@ private fun LibraryTabHost(
 ) {
     val tracks by viewModel.tracks.collectAsStateWithLifecycle()
     val playlists by viewModel.playlists.collectAsStateWithLifecycle()
-    val downloadTasks by viewModel.downloadTasks.collectAsStateWithLifecycle()
 
     LibraryScreen(
         tracks = tracks,
         playlists = playlists,
-        downloadTasks = downloadTasks,
         onPlayTrack = { list, idx -> viewModel.playTrackInList(list, idx) },
         onDeleteTrack = { viewModel.deleteTrack(it) },
         onCreatePlaylist = { viewModel.createPlaylist(it) },
@@ -510,7 +506,7 @@ private fun ChannelScreenHost(
 ) {
     val savedChannels by viewModel.savedChannels.collectAsStateWithLifecycle()
     val tracks by viewModel.tracks.collectAsStateWithLifecycle()
-    val downloadTasks by viewModel.downloadTasks.collectAsStateWithLifecycle()
+    val downloadTasks by viewModel.downloadBadges.collectAsStateWithLifecycle()
 
     ChannelScreen(
         channelTitle = channelTitle,

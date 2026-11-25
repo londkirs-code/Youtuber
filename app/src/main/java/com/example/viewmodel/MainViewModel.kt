@@ -33,6 +33,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -43,7 +44,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // One shared instance (also used by notification buttons)
     val downloadManager: DownloadManager = (application as App).downloadManager
 
-    // Navigation Tab (0: Search, 1: Downloads, 2: Library, 3: Settings)
+    // Navigation Tab (0: Search, 1: Saved, 2: Downloads, 3: Library/files, 4: Settings)
     private val _currentTab = MutableStateFlow(0)
     val currentTab: StateFlow<Int> = _currentTab.asStateFlow()
 
@@ -127,6 +128,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val reminderM = prefs.getInt("reminder_min", 0)
         val autoDl = prefs.getBoolean("auto_dl_enabled", false)
         val autoKw = prefs.getString("auto_dl_keyword", "") ?: ""
+        val quality = prefs.getString("audio_quality", null)
+            ?.let { name -> AudioQuality.entries.firstOrNull { it.name == name } }
+            ?: AudioQuality.BEST
         return UserSettings(
             allowCellularDownloads = cellular,
             isDarkMode = dark,
@@ -138,7 +142,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             reminderHour = reminderH,
             reminderMinute = reminderM,
             autoDownloadEnabled = autoDl,
-            autoDownloadKeyword = autoKw
+            autoDownloadKeyword = autoKw,
+            audioQuality = quality
         )
     }
 
@@ -157,6 +162,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .putInt("reminder_min", updated.reminderMinute)
             .putBoolean("auto_dl_enabled", updated.autoDownloadEnabled)
             .putString("auto_dl_keyword", updated.autoDownloadKeyword)
+            .putString("audio_quality", updated.audioQuality.name)
             .apply()
     }
 
@@ -170,8 +176,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val playlists: StateFlow<List<PlaylistEntity>> = database.playlistDao().getAllPlaylists()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    // Downloads from DownloadManager
+    // Downloads from DownloadManager (full detail incl. logs) — only for the Downloads tab.
     val downloadTasks: StateFlow<List<DownloadTask>> = downloadManager.tasks
+
+    /**
+     * Download state for the Search / Channel screens, which only show a badge + percent per video.
+     * The full task list changes several times per second (log lines, speed, sizes); passing it to
+     * those screens recomposed every result card on every change and made scrolling freeze while
+     * a download was running. This flow only emits when a status or whole percent changes.
+     */
+    val downloadBadges: StateFlow<List<DownloadTask>> = downloadManager.tasks
+        .map { tasks ->
+            tasks.map { t ->
+                DownloadTask(
+                    id = t.id,
+                    videoId = t.videoId,
+                    title = "",
+                    channel = "",
+                    thumbnailUrl = "",
+                    isLiveStream = t.isLiveStream,
+                    progressPercent = t.progressPercent,
+                    status = t.status
+                )
+            }
+        }
+        .distinctUntilChanged()
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // Distinct count of active downloads to prevent tab badge from triggering root recompositions on every byte downloaded
     val activeDownloadsCount: StateFlow<Int> = downloadManager.tasks
@@ -268,6 +299,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             delay(250)
             val suggestions = YouTubeEngine.getSearchSuggestions(newQuery)
             _searchSuggestions.value = suggestions
+        }
+    }
+
+    /** Shared text / "open with": a YouTube link opens its card directly, anything else is searched once. */
+    fun openSharedText(text: String) {
+        if (isYoutubeLink(text)) {
+            onSearchQueryChanged(text)
+        } else {
+            executeSearch(text)
         }
     }
 

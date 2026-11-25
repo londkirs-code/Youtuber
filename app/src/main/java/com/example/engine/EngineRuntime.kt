@@ -72,16 +72,10 @@ object EngineRuntime {
             Log.w(TAG, "One or more bundled FFmpeg native libraries are missing from $nativeDir; continuing engine initialization.")
         }
 
-        try {
-            Log.i(TAG, "FFmpeg: " + readVersion(ffmpegBinary))
-        } catch (error: Exception) {
-            Log.w(TAG, "FFmpeg version check unavailable; continuing.", error)
-        }
-        try {
-            Log.i(TAG, "FFprobe: " + readVersion(ffprobeBinary))
-        } catch (error: Exception) {
-            Log.w(TAG, "FFprobe version check unavailable; continuing.", error)
-        }
+        // Version checks (spawning ffmpeg/ffprobe/qjs) are done on demand in getVersions();
+        // running them on every launch only delayed the engine becoming ready.
+        ffmpegBinary.setExecutable(true, false)
+        ffprobeBinary.setExecutable(true, false)
 
         val runtimeRoot = File(app.noBackupFilesDir, "tunevault-runtime")
         val ffmpegDir = File(runtimeRoot, "bin")
@@ -108,12 +102,7 @@ object EngineRuntime {
         }
 
         val quickJs = File(nativeDir, "libqjs.so")
-        try {
-            if (!quickJs.exists()) throw IllegalStateException("QuickJS executable is missing")
-            Log.i(TAG, "QuickJS: " + runBinary(quickJs, "-v").lineSequence().firstOrNull().orEmpty())
-        } catch (error: Exception) {
-            Log.w(TAG, "QuickJS version check unavailable; continuing.", error)
-        }
+        if (!quickJs.exists()) Log.w(TAG, "QuickJS executable is missing from $nativeDir")
 
         ffmpegDirectory = File(ffmpegLocation)
         quickJsExecutable = quickJs
@@ -124,11 +113,12 @@ object EngineRuntime {
             cache.absolutePath, userPackages.absolutePath
         )
 
-        // versions() imports yt_dlp; if it succeeds, Python and yt-dlp are ready.
-        // FFmpeg/FFprobe/QuickJS checks above are diagnostics and must not block startup.
-        val version = getVersionsInternal()
+        // Importing yt_dlp is enough to know the engine works. The full versions() report
+        // (extractor count + running every binary again) is only built for the diagnostics screen.
+        val ytDlpVersion = Python.getInstance().getModule("tunevault_engine")
+            .callAttr("quick_version").toJava(String::class.java)
         initialized = true
-        Log.i(TAG, "Embedded engine ready: Python ${version.python}, yt-dlp ${version.ytDlp}")
+        Log.i(TAG, "Embedded engine ready: yt-dlp $ytDlpVersion")
     }
 
     fun isReady(): Boolean = initialized

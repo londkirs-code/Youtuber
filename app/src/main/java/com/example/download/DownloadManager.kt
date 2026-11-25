@@ -21,6 +21,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -63,7 +64,20 @@ class DownloadManager(private val context: Context) {
     private val activeJobs = ConcurrentHashMap<String, Job>()
     private val liveStopRequested = ConcurrentHashMap.newKeySet<String>()
 
+    @Volatile private var cachedFolderKey: String? = null
+    @Volatile private var cachedFolder: File? = null
+
     private fun getDownloadFolder(settings: UserSettings): File {
+        val key = settings.downloadFolderUri + "|" + settings.downloadFolderPath
+        val cached = cachedFolder
+        if (cached != null && cachedFolderKey == key && cached.isDirectory) return cached
+        return resolveDownloadFolder(settings).also {
+            cachedFolder = it
+            cachedFolderKey = key
+        }
+    }
+
+    private fun resolveDownloadFolder(settings: UserSettings): File {
         // 1. If user picked a folder via SAF DocumentTree, resolve directly to storage path if writable
         if (settings.downloadFolderUri.isNotBlank()) {
             try {
@@ -143,18 +157,10 @@ class DownloadManager(private val context: Context) {
         settings: UserSettings
     ): String {
         val taskId = UUID.randomUUID().toString()
-        val targetFolder = getDownloadFolder(settings)
-        val sanitizedTitle = title.replace(Regex("[^a-zA-Z0-9א-ת _-]"), "").trim().ifEmpty { "Audio_$videoId" }
-        val rawBase = File(targetFolder, "${sanitizedTitle}_raw_${System.currentTimeMillis()}")
-        val initialFilePath = rawBase.absolutePath + ".m4a"
 
-        val folderLabel = if (settings.downloadFolderUri.isNotBlank()) {
-            settings.downloadFolderPath.ifBlank { targetFolder.name }
-        } else {
-            targetFolder.name
-        }
-        val destinationNote = "נשמר ב: $folderLabel (${targetFolder.absolutePath})"
-
+        // The task appears in the UI immediately. Resolving/creating the target folder touches
+        // the disk (mkdirs + a write test), so it runs on the IO dispatcher below — doing it here
+        // froze the screen for a moment on every tap on "download".
         val newTask = DownloadTask(
             id = taskId,
             videoId = videoId,
@@ -164,9 +170,7 @@ class DownloadManager(private val context: Context) {
             isLiveStream = isLive,
             trimRange = trimRange,
             status = DownloadStatus.QUEUED,
-            hebrewStatusText = "נוסף לתור ההורדות...",
-            filePath = initialFilePath,
-            logs = listOf(destinationNote)
+            hebrewStatusText = "נוסף לתור ההורדות..."
         )
 
         _tasks.update { listOf(newTask) + it }
@@ -175,7 +179,25 @@ class DownloadManager(private val context: Context) {
         DownloadService.start(context)
         Notifier.downloadStarted(context, taskId, title, thumbnailUrl)
 
-        scope.launch {
+        // LAZY so the job is registered in activeJobs before it can finish and unregister itself.
+        val job = scope.launch(CoroutineName(taskId), start = CoroutineStart.LAZY) {
+            val targetFolder = getDownloadFolder(settings)
+            val sanitizedTitle = title.replace(Regex("[^a-zA-Z0-9א-ת _-]"), "").trim().ifEmpty { "Audio_$videoId" }
+            val rawBase = File(targetFolder, "${sanitizedTitle}_raw_${System.currentTimeMillis()}")
+            val initialFilePath = rawBase.absolutePath + ".m4a"
+
+            val folderLabel = if (settings.downloadFolderUri.isNotBlank()) {
+                settings.downloadFolderPath.ifBlank { targetFolder.name }
+            } else {
+                targetFolder.name
+            }
+            val destinationNote = "נשמר ב: $folderLabel (${targetFolder.absolutePath})"
+            _tasks.update { list ->
+                list.map {
+                    if (it.id == taskId) it.copy(filePath = initialFilePath, logs = listOf(destinationNote) + it.logs) else it
+                }
+            }
+
             try {
                 database.trackDao().insertTrack(
                     TrackEntity(
@@ -197,12 +219,11 @@ class DownloadManager(private val context: Context) {
             } catch (e: Exception) {
                 Log.w(TAG, "Error inserting initial track in Room", e)
             }
-        }
 
-        val job = scope.launch(CoroutineName(taskId)) {
             executeDownload(taskId, videoId, title, channel, thumbnailUrl, isLive, trimRange, settings, targetFolder, rawBase)
         }
         activeJobs[taskId] = job
+        job.start()
         return taskId
     }
 
@@ -224,9 +245,10 @@ class DownloadManager(private val context: Context) {
         var lastLogFlushTime = 0L
 
         fun flushLogs() {
-            if (rawLogBuffer.isEmpty()) return
-            val toAdd = rawLogBuffer.toList()
-            rawLogBuffer.clear()
+            val toAdd = synchronized(rawLogBuffer) {
+                if (rawLogBuffer.isEmpty()) return
+                rawLogBuffer.toList().also { rawLogBuffer.clear() }
+            }
             _tasks.update { list ->
                 list.map {
                     if (it.id == taskId) {
@@ -247,9 +269,13 @@ class DownloadManager(private val context: Context) {
 
         fun rawLog(line: String) {
             if (line.isBlank()) return
-            rawLogBuffer.add(line)
+            val size = synchronized(rawLogBuffer) {
+                rawLogBuffer.add(line)
+                rawLogBuffer.size
+            }
             val now = System.currentTimeMillis()
-            if (now - lastLogFlushTime >= 800L || rawLogBuffer.size >= 25) {
+            // Flush at most ~once a second: every flush re-emits the task list to the UI.
+            if (now - lastLogFlushTime >= 1000L || size >= 60) {
                 lastLogFlushTime = now
                 flushLogs()
             }
@@ -334,7 +360,7 @@ class DownloadManager(private val context: Context) {
                         log("[yt-dlp] מנסה לקוח YouTube: $playerClient ($stage)")
                         rawFile = runYtDlp(
                             taskId, videoId, isLive, targetFolder, rawBase,
-                            playerClient, ::log, ::rawLog, ::updateState
+                            playerClient, formatSpecFor(settings), ::log, ::rawLog, ::updateState
                         )
                         if (rawFile != null && rawFile!!.exists() && rawFile!!.length() > 0L) {
                             log("[yt-dlp] הלקוח $playerClient הצליח להפיק קובץ שמע.")
@@ -375,7 +401,7 @@ class DownloadManager(private val context: Context) {
                                 log("[yt-dlp] מנסה לקוח גיבוי לחילוץ: $playerClient ($stage)")
                                 rawFile = runYtDlp(
                                     taskId, videoId, isLive, targetFolder, rawBase,
-                                    playerClient, ::log, ::rawLog, ::updateState
+                                    playerClient, formatSpecFor(settings), ::log, ::rawLog, ::updateState
                                 )
                                 if (rawFile != null && rawFile!!.exists() && rawFile!!.length() > 0L) {
                                     log("[yt-dlp] הלקוח $playerClient הצליח להפיק קובץ שמע.")
@@ -600,6 +626,7 @@ class DownloadManager(private val context: Context) {
         targetFolder: File,
         rawBase: File,
         playerClient: String,
+        formatSpec: String,
         log: (String) -> Unit,
         rawLog: (String) -> Unit,
         updateState: (DownloadStatus, Int, String?, String?, String?, String?, Long?) -> Unit
@@ -690,7 +717,7 @@ class DownloadManager(private val context: Context) {
         }
 
         if (!isLive) {
-            val (exitCode, produced) = executeFormat("bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio/best")
+            val (exitCode, produced) = executeFormat(formatSpec)
             if (exitCode != 0) {
                 throw EngineExecutionException("yt-dlp exited with code $exitCode for player_client=$playerClient")
             }
@@ -781,7 +808,8 @@ class DownloadManager(private val context: Context) {
         }
         liveStopRequested.remove(taskId)
         EngineRuntime.cancel(taskId)
-        activeJobs[taskId]?.cancel()
+        activeJobs.remove(taskId)?.cancel()
+        if (activeJobs.isEmpty()) DownloadService.stop(context)
         _tasks.update { it.filterNot { task -> task.id == taskId } }
         Notifier.cancel(context, taskId)
         scope.launch {
@@ -801,6 +829,16 @@ class DownloadManager(private val context: Context) {
     }
 
     // ---------------- helpers ----------------
+
+    /** yt-dlp format selector for the quality picked in settings / in the quality menu. */
+    private fun formatSpecFor(settings: UserSettings): String = when (settings.audioQuality) {
+        com.example.data.model.AudioQuality.BEST ->
+            "bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio/best"
+        com.example.data.model.AudioQuality.HIGH ->
+            "bestaudio[ext=m4a][abr<=130]/bestaudio[acodec^=mp4a][abr<=130]/bestaudio[ext=m4a]/bestaudio/best"
+        com.example.data.model.AudioQuality.NORMAL ->
+            "worstaudio[ext=m4a][abr>=40]/bestaudio[ext=m4a][abr<=100]/bestaudio[ext=m4a]/bestaudio/best"
+    }
 
     private fun shortError(e: Exception): String =
         (e.message ?: "שגיאה לא ידועה").lines().lastOrNull { it.isNotBlank() }?.take(200) ?: "שגיאה לא ידועה"
